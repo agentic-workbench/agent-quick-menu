@@ -39,7 +39,7 @@ Check a name by typing `/` in Claude Code. A command that is not available is hi
 
 ## Plugins without the file
 
-A plugin without `quick-menu.json` gets no section of its own and is not listed.
+A plugin without `quick-menu.json` gets a settings-only section when it has `userConfig` rows (all of them, no commands). Without rows it is not listed.
 
 ## Versioning
 

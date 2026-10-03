@@ -16,7 +16,7 @@
         "type": "object",
         "required": ["command"],
         "properties": {
-          "command": { "type": "string", "minLength": 1, "description": "Command name as / takes it, without the slash." },
+          "command": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Command name as / takes it, without the slash." },
           "label": { "type": "string", "description": "Button text; default the command." },
           "args": { "type": "string", "description": "Arguments passed as typed." },
           "description": { "type": "string", "description": "Dimmed help text." }

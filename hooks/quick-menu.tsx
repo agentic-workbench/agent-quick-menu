@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { ConfigRow, ConfigValue, EngineInterface, Register } from 'claude-code'
+import type { ConfigRow, ConfigValue, Elements, EngineInterface, Register, RenderElement, RenderNode } from 'claude-code'
 
 import type { Favourite, MenuCommand, MenuFile, MenuProblem, MenuSection, SectionCommand } from '../types'
 
@@ -65,6 +65,18 @@ async function readJson($: EngineInterface, path: string): Promise<unknown> {
 
 type Target = { name: string; root: string }
 
+let sessionCwd = ''
+
+/** The install entry for this session: a project or local one for the cwd, else the user one, else the first. */
+function chooseEntry(entries: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(entries)) return undefined
+  const objects = entries.filter(isObject)
+  const here = objects.find(
+    x => (x.scope === 'project' || x.scope === 'local') && sessionCwd !== '' && x.projectPath === sessionCwd,
+  )
+  return here ?? objects.find(x => x.scope === 'user') ?? objects[0]
+}
+
 async function registryTargets($: EngineInterface, found: MenuProblem[]): Promise<Target[]> {
   let enabled: string[] = []
   try {
@@ -76,8 +88,9 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
     found.push({ plugin: 'settings', message: `cannot read settings: ${message(err)}` })
   }
   if (enabled.length === 0) return []
-  const home = await $.env.get('HOME')
-  const registryPath = `${home ?? ''}/.claude/plugins/installed_plugins.json`
+  const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+  const base = configDir ? configDir : `${(await $.env.get('HOME')) ?? ''}/.claude`
+  const registryPath = `${base}/plugins/installed_plugins.json`
   let plugins: Record<string, unknown> = {}
   try {
     const json = await readJson($, registryPath)
@@ -88,10 +101,9 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
   }
   const targets: Target[] = []
   for (const id of enabled) {
-    const entries = plugins[id]
-    const entry = Array.isArray(entries) ? entries.at(-1) : undefined
-    if (isObject(entry) && typeof entry.installPath === 'string') {
-      targets.push({ name: id.split('@')[0], root: entry.installPath })
+    const entry = chooseEntry(plugins[id])
+    if (entry && typeof entry.installPath === 'string') {
+      targets.push({ name: id.split('@')[0] ?? id, root: entry.installPath })
     }
   }
   return targets
@@ -130,11 +142,7 @@ async function readMenuFile(
   return null
 }
 
-function fieldsOf(rows: readonly { key: string }[], plugin: string): string[] {
-  return rows.filter(r => r.key.startsWith(`${plugin}.`)).map(r => r.key.slice(plugin.length + 1))
-}
-
-/** Reads every enabled plugin's menu file and builds the sections; failures become problems. */
+/** Reads every enabled plugin's menu file and builds the file sections; failures become problems. */
 export async function discover($: EngineInterface): Promise<{ sections: MenuSection[]; problems: MenuProblem[] }> {
   const found: MenuProblem[] = []
   const all = [...(await registryTargets($, found)), ...(await dirTargets($, found))]
@@ -145,12 +153,6 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
     available = new Set((await $.command.list()).map(c => c.name))
   } catch (err) {
     found.push({ plugin: 'commands', message: `cannot list commands: ${message(err)}` })
-  }
-  let rows: readonly { key: string }[] = []
-  try {
-    rows = await $.config.list()
-  } catch (err) {
-    found.push({ plugin: 'config', message: `cannot list settings: ${message(err)}` })
   }
 
   const result: MenuSection[] = []
@@ -170,14 +172,9 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
         settings: file.settings,
         source: 'file',
       })
-      continue
-    }
-    const fields = fieldsOf(rows, target.name)
-    if (fields.length > 0) {
-      result.push({ plugin: target.name, title: target.name, commands: [], settings: fields, source: 'config' })
     }
   }
-  result.sort((a, b) => (a.source === b.source ? a.title.localeCompare(b.title) : a.source === 'file' ? -1 : 1))
+  result.sort((a, b) => a.title.localeCompare(b.title))
   return { sections: result, problems: found }
 }
 
@@ -208,7 +205,7 @@ const rowState = atom({ plugin: 'agent-quick-menu', key: 'rowState' } as const, 
 const commandKey = (plugin: string, c: SectionCommand): string => `cmd:${plugin}:${c.command}:${c.args ?? ''}`
 const settingKey = (key: string): string => `set:${key}`
 
-const toastLine = (text: string): string => text.split('\n')[0].slice(0, 200)
+const toastLine = (text: string): string => (text.split('\n')[0] ?? '').slice(0, 200)
 
 async function setNote($: EngineInterface, id: string, note: Note | null): Promise<void> {
   await update($, rowState, s => {
@@ -230,8 +227,14 @@ async function setQueued($: EngineInterface, id: string, isQueued: boolean): Pro
 
 async function runCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
   const id = commandKey(plugin, c)
-  if ((await read($, rowState)).queued[id]) return
-  await setQueued($, id, true)
+  let claimed = false
+  await update($, rowState, s => {
+    claimed = false
+    if (s.queued[id]) return s
+    claimed = true
+    return { ...s, queued: { ...s.queued, [id]: true as const } }
+  })
+  if (!claimed) return
   $.ui.invalidate('ui.render')
   try {
     const result = await $.command.run({ command: c.command, ...(c.args !== undefined && { args: c.args }) })
@@ -289,23 +292,30 @@ function isFavourites(v: unknown): v is Favourite[] {
   )
 }
 
-async function loadFavourites($: EngineInterface): Promise<void> {
-  let stored: unknown
+async function storedFavourites($: EngineInterface): Promise<Favourite[]> {
   try {
-    stored = await $.store.get('favourites')
+    const stored: unknown = await $.store.get('favourites')
+    return isFavourites(stored) ? stored : []
   } catch {
-    stored = undefined
+    return []
   }
-  await update($, favourites, () => (isFavourites(stored) ? stored : []))
+}
+
+async function loadFavourites($: EngineInterface): Promise<void> {
+  const stored = await storedFavourites($)
+  await update($, favourites, () => stored)
 }
 
 async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> {
-  await update($, favourites, list => (isFavourite(list, f) ? list.filter(x => !sameFav(x, f)) : [...list, f]))
-  await $.store.set('favourites', await read($, favourites))
+  const list = await storedFavourites($)
+  const changed = isFavourite(list, f) ? list.filter(x => !sameFav(x, f)) : [...list, f]
+  await $.store.set('favourites', changed)
+  await update($, favourites, () => changed)
   $.ui.invalidate('ui.render')
 }
 
-type FavCtx = { list: readonly Favourite[]; prefix: string }
+/** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). */
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
@@ -326,7 +336,8 @@ function renderSetting(
   notes: Record<string, Note>,
   fav: FavCtx,
 ) {
-  const { Box, Text, Button, Select, Input } = ui
+  const { Box, Text, Button } = ui
+  const { Select, Input } = ui as Partial<Pick<Elements['terminal'], 'Select' | 'Input'>>
   const id = fav.prefix + settingKey(row.key)
   const note = notes[settingKey(row.key)]
   const shown = Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
@@ -341,25 +352,27 @@ function renderSetting(
         onPress={() => void writeSetting($, row, !row.value)}
       />
     )
-  } else if (row.kind === 'choice' && row.options && row.options.length > 0) {
+  } else if (row.kind === 'choice' && row.options && row.options.length > 0 && Select && fav.hasFields) {
     control = (
       <Select
         key={id}
         label={`${row.label}: `}
         options={row.options.map(value => ({ value }))}
         value={shown}
-        onSelect={value => void writeSetting($, row, value)}
+        onSelect={(value: string) => void writeSetting($, row, value)}
       />
     )
-  } else {
+  } else if (Input && fav.hasFields) {
     control = (
       <Input
         key={id}
         label={`${row.label}: `}
         value={shown}
-        onSubmit={value => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
+        onSubmit={(value: string) => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
       />
     )
+  } else {
+    control = <Text key={id}>{`${row.label}: ${shown}`}</Text>
   }
   return (
     <Box key={`row:${id}`} flexDirection="row">
@@ -396,7 +409,7 @@ function renderCommand(
 }
 
 function settingRows(section: MenuSection, rows: readonly ConfigRow[]): ConfigRow[] {
-  const own = rows.filter(r => r.key.startsWith(`${section.plugin}.`))
+  const own = rows.filter(r => r.provider.plugin === section.plugin)
   if (section.settings === null) return own
   const out: ConfigRow[] = []
   for (const field of section.settings) {
@@ -435,6 +448,14 @@ function renderFavourite(
   )
 }
 
+/** Settings-only sections: plugins with rows but no menu file section, built at draw time. */
+function configSections(rows: readonly ConfigRow[], filed: readonly MenuSection[]): MenuSection[] {
+  const names = new Set(rows.map(r => r.provider.plugin).filter(n => n !== 'engine' && !filed.some(x => x.plugin === n)))
+  return [...names]
+    .sort((a, b) => a.localeCompare(b))
+    .map(plugin => ({ plugin, title: plugin, commands: [], settings: null, source: 'config' as const }))
+}
+
 async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
   const ui = $.ui.resolve(e)
   const { Box, Text } = ui
@@ -446,19 +467,21 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
     rows = []
   }
   const engineRows = rows.filter(r => r.provider.plugin === 'engine')
+  const all = [...s, ...configSections(rows, s)]
   const favs = await read($, favourites)
-  const own: FavCtx = { list: favs, prefix: '' }
-  const pinned: FavCtx = { list: favs, prefix: 'fav:' }
+  const hasFields = e.surface !== 'mobile'
+  const own: FavCtx = { list: favs, prefix: '', hasFields }
+  const pinned: FavCtx = { list: favs, prefix: 'fav:', hasFields }
   return (
     <Box flexDirection="column">
       {favs.length > 0 && (
         <Box key="favourites" flexDirection="column">
           <Text bold>Favourites</Text>
-          {favs.map(f => renderFavourite($, ui, f, s, rows, state, pinned))}
+          {favs.map(f => renderFavourite($, ui, f, all, rows, state, pinned))}
         </Box>
       )}
-      {s.length === 0 && engineRows.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
-      {s.map(section => (
+      {all.length === 0 && engineRows.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
+      {all.map(section => (
         <Box key={section.plugin} flexDirection="column">
           <Text bold>{section.title}</Text>
           {section.commands.map(c => renderCommand($, ui, section.plugin, c, state, own))}
@@ -473,7 +496,7 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
       )}
       {p.length > 0 && <Text bold>Problems</Text>}
       {p.map((x, i) => (
-        <Text key={i} color="red">{`  ${x.plugin}: ${x.message}`}</Text>
+        <Text key={String(i)} color="red">{`  ${x.plugin}: ${x.message}`}</Text>
       ))}
     </Box>
   )
@@ -483,7 +506,10 @@ type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
   props: { hasSurvey: boolean; bodyColumns: number }
 }
 
-type BandItem = { label: string; onPress: () => void }
+type BandItem = { label: string; onPress: () => void; isCommand: boolean; digit?: number }
+
+/** Display width of a label in cells: code points, not UTF-16 units. */
+const width = (text: string): number => [...text].length
 
 function bandItem(
   $: EngineInterface,
@@ -494,23 +520,27 @@ function bandItem(
   if (f.kind === 'command') {
     const c = findFavCommand(f, found)
     if (!c || !c.isAvailable) return null
-    return { label: c.label, onPress: () => void runCommand($, f.plugin, c) }
+    return { label: c.label, onPress: () => void runCommand($, f.plugin, c), isCommand: true }
   }
   const r = rows.find(x => x.key === f.key)
   if (!r) return null
   if (r.kind === 'boolean' && !r.isLocked) {
-    return { label: `${r.label}: ${r.value ? 'on' : 'off'}`, onPress: () => void writeSetting($, r, !r.value) }
+    return {
+      label: `${r.label}: ${r.value ? 'on' : 'off'}`,
+      onPress: () => void writeSetting($, r, !r.value),
+      isCommand: false,
+    }
   }
-  return { label: r.label, onPress: () => void openPane($) }
+  return { label: r.label, onPress: () => void openPane($), isCommand: false }
 }
 
 async function openPane($: EngineInterface): Promise<void> {
   await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100 })
 }
 
-async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown) {
-  if (e.props.hasSurvey) return next()
-  if (e.surface !== 'terminal' && e.surface !== 'desktop') return next()
+async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown): Promise<RenderElement> {
+  if (e.props.hasSurvey) return next() as Promise<RenderElement>
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
   const { Box, Button } = $.ui.resolve(e)
   const [favs, found] = [await read($, favourites), await read($, sections)]
   let rows: ConfigRow[] = []
@@ -520,16 +550,18 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
     rows = []
   }
   const menuLabel = '☰ menu'
-  let used = menuLabel.length + 2
+  // Each button takes its label plus 5 cells; 4 stay free for the engine's `[-]`.
+  let used = width(menuLabel) + 5 + 4
   const items: BandItem[] = []
   for (const f of favs) {
     const item = bandItem($, f, found, rows)
     if (!item) continue
-    used += item.label.length + 3
+    used += width(item.label) + 5
     if (used > e.props.bodyColumns) break
-    items.push(item)
+    const digits = items.filter(x => x.isCommand).length
+    items.push(item.isCommand && digits < 9 ? { ...item, digit: digits + 1 } : item)
   }
-  const below = await next()
+  const below = (await next()) as RenderNode | null | undefined
   return (
     <Box flexDirection="column">
       <Box>
@@ -538,25 +570,27 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
           <Button
             key={`band:${i + 1}`}
             label={item.label}
-            {...(i < 9 && { hotkey: String(i + 1) })}
+            {...(item.digit !== undefined && { hotkey: String(item.digit) })}
             onPress={item.onPress}
           />
         ))}
       </Box>
-      {below !== undefined && below !== null && below}
+      {below}
     </Box>
   )
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    sessionCwd = e.cwd
+    await update($, rowState, () => ({ queued: {}, notes: {} }))
+    await loadFavourites($)
     await $.command.register({
       name: 'menu',
       description: 'Open the quick menu (refresh: discover plugin menus again)',
       argumentHint: '[refresh]',
     })
     await runDiscovery($)
-    await loadFavourites($)
     return next(e)
   })
 

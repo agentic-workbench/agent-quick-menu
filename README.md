@@ -24,13 +24,14 @@ Then run `/reload-plugins` in a running session.
 - `/menu` opens the pane. `/menu refresh` discovers plugin menus again.
 - The band above the prompt shows `☰ menu` (hotkey `m` while the band is focused) and your favourites.
 - `ctrl+x tab` focuses the band.
-- With an empty prompt, the digits `1` to `9` press the favourites in order.
+- With an empty prompt, the digits `1` to `9` press the command favourites in order. Setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
 - `[-]` at the end of the band (drawn by Claude Code, or ctrl+x ctrl+a) folds the band.
 
 ## What appears
 
 - One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands as buttons and its settings (`userConfig`) as rows.
+- A settings-only section for each plugin without the file that has `userConfig` rows.
 - A "Claude Code" section with Claude Code's own settings.
 - A locked row (`(managed)`) is set by managed policy and cannot be changed here.
 - A "Problems" list shows plugin files that were skipped and why.
@@ -58,7 +59,7 @@ The full format is in [docs/convention.md](docs/convention.md).
 ## Development
 
 ```
-make check                 # claude plugin validate + test
+make check                 # claude plugin validate + test, and tsc --noEmit when tsc is on PATH
 claude --plugin-dir .      # try the plugin from this checkout
 ```
 

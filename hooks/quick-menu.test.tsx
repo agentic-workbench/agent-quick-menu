@@ -11,12 +11,14 @@ const PANE_PROPS = {
   view: { rows: 24, columns: 100 },
 } as never
 
+declare const setTimeout: (fn: (...a: any[]) => void, ms: number) => unknown
+
 const HOME = '/home/u'
 const REGISTRY = `${HOME}/.claude/plugins/installed_plugins.json`
 
 type World = {
   enabled?: Record<string, boolean>
-  registry?: Record<string, { installPath: string }[]>
+  registry?: Record<string, Record<string, unknown>[]>
   files?: Record<string, string>
   env?: Record<string, string>
   commands?: string[]
@@ -63,8 +65,8 @@ function stub(on: any, w: World) {
   )
 }
 
-async function start($: any) {
-  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+async function start($: any, cwd = '/tmp') {
+  await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
 }
 
 async function paneText($: any): Promise<any> {
@@ -178,8 +180,64 @@ describe('discovery', () => {
     expect(await ui.find({ text: /^cfg$/ })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.token' })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.mode' })).toBeDefined()
-    expect(await ui.find({ key: 'set:other.x' })).toBeUndefined()
+    expect(await ui.find({ key: 'set:other.x' })).toBeDefined()
     expect(await ui.find({ text: /bare/ })).toBeUndefined()
+  })
+
+  test('the registry is read from CLAUDE_CONFIG_DIR when set', async ($, on) => {
+    stub(on, {
+      enabled: { 'alpha@mk': true },
+      env: { CLAUDE_CONFIG_DIR: '/cfg' },
+      files: {
+        '/cfg/plugins/installed_plugins.json': file({
+          version: 2,
+          plugins: { 'alpha@mk': [{ scope: 'user', installPath: '/p/alpha' }] },
+        }),
+        '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, title: 'FromCfgDir' }),
+      },
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /^FromCfgDir$/ })).toBeDefined()
+    expect(await ui.find({ text: /installed_plugins/ })).toBeUndefined()
+  })
+
+  test('the install entry is the project or local one for the cwd, else user, else the first', async ($, on) => {
+    const mixed: Record<string, unknown>[] = [
+      { scope: 'project', projectPath: '/other', installPath: '/p/other' },
+      { scope: 'user', installPath: '/p/user' },
+      { scope: 'local', projectPath: '/work', installPath: '/p/work' },
+    ]
+    const world: World = {
+      enabled: { 'alpha@mk': true },
+      registry: { 'alpha@mk': mixed },
+      files: Object.fromEntries(
+        ['other', 'user', 'work'].map(n => [`/p/${n}/.claude-plugin/quick-menu.json`, file({ version: 1, title: n })]),
+      ),
+    }
+    stub(on, world)
+    const titles = async (cwd: string) => {
+      await start($, cwd)
+      const ui = await paneText($)
+      const texts = await textsOf(ui)
+      await ui.unmount()
+      return texts
+    }
+    expect(await titles('/work')).toContain('work')
+    world.registry = { 'alpha@mk': [mixed[0]!, mixed[1]!] }
+    expect(await titles('/nowhere')).toContain('user')
+    world.registry = { 'alpha@mk': [mixed[0]!, mixed[2]!] }
+    expect(await titles('/nowhere')).toContain('other')
+  })
+
+  test('a builtin plugin with rows gets a settings-only section without a registry entry', async ($, on) => {
+    stub(on, {
+      rows: [row('inline.opt', { provider: { plugin: 'inline', tier: 'core' } }), row('theme')],
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /^inline$/ })).toBeDefined()
+    expect(await ui.find({ key: 'set:inline.opt' })).toBeDefined()
   })
 
   test('CLAUDE_CODE_PLUGIN_DIRS roots are discovered by their plugin.json name', async ($, on) => {
@@ -201,12 +259,12 @@ describe('discovery', () => {
     const world: World = { enabled: {}, registry: {} }
     stub(on, world)
     await start($)
-    const before = await $.command.run({ command: 'menu', args: 'refresh' })
+    const before = await $.command.run({ command: 'menu', args: 'refresh' } as never)
     expect(before.text).toMatch(/0 sections/)
     world.enabled = { 'late@m': true }
     world.registry = { 'late@m': [{ installPath: '/p/late' }] }
     world.files = { '/p/late/.claude-plugin/quick-menu.json': file({ version: 1 }) }
-    const after = await $.command.run({ command: 'menu', args: 'refresh' })
+    const after = await $.command.run({ command: 'menu', args: 'refresh' } as never)
     expect(after.text).toMatch(/1 sections, 0 problems/)
   })
 })
@@ -219,11 +277,12 @@ const alphaFile = (o: unknown) => ({ '/p/alpha/.claude-plugin/quick-menu.json': 
 
 describe('commands', () => {
   test('press runs $.command.run with command and args, shows queued, then toasts the first line', async ($, on) => {
-    let release: (v: unknown) => void = () => {}
+    let release: (v?: unknown) => void = () => {}
     const calls: unknown[] = []
     const toasts: string[] = []
-    on('ui.toast', (_$: unknown, e: { text: string }) => {
+    on('ui.toast', (_$: any, e: any, next: any) => {
       toasts.push(e.text)
+      return next(e)
     })
     stub(on, {
       ...ALPHA,
@@ -247,6 +306,44 @@ describe('commands', () => {
     await new Promise(r => setTimeout(r, 100))
     expect(toasts).toEqual(['first line'])
     expect(await ui.find({ text: /queued/ })).toBeUndefined()
+  })
+
+  test('two quick presses run the command once', async ($, on) => {
+    let release: (v?: unknown) => void = () => {}
+    const calls: unknown[] = []
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'go' }] }),
+      commands: ['go'],
+      run: e => (calls.push(e), new Promise(res => (release = res))),
+    })
+    await start($)
+    const ui = await paneText($)
+    const first = ui.press({ key: 'cmd:alpha:go:' })
+    const second = ui.press({ key: 'cmd:alpha:go:' })
+    await new Promise(r => setTimeout(r, 20))
+    release({ text: 'ok' })
+    await Promise.all([first, second])
+    await new Promise(r => setTimeout(r, 100))
+    expect(calls).toHaveLength(1)
+  })
+
+  test('a hot reload (session.start again) clears the queued state', async ($, on) => {
+    const calls: unknown[] = []
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'go' }] }),
+      commands: ['go'],
+      run: e => (calls.push(e), new Promise(res => setTimeout(() => res({ text: '' }), 60))),
+    })
+    await start($)
+    const ui = await paneText($)
+    void ui.press({ key: 'cmd:alpha:go:' })
+    await new Promise(r => setTimeout(r, 20))
+    expect(await ui.find({ text: /queued/ })).toBeDefined()
+    await start($)
+    expect(await ui.find({ text: /queued/ })).toBeUndefined()
+    await new Promise(r => setTimeout(r, 150))
   })
 
   test('an unavailable command shows "not available" and has no action', async ($, on) => {
@@ -292,6 +389,29 @@ describe('settings', () => {
       { key: 'alpha.name', value: 'hello' },
       { key: 'alpha.count', value: 42 },
     ])
+  })
+
+  test('on mobile, without Select and Input, choice, text and number rows are read-only text', async ($, on) => {
+    stub(
+      on,
+      setup([
+        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] }),
+        row('alpha.name', { kind: 'text', value: 'x' }),
+        row('alpha.count', { kind: 'number', value: 1 }),
+      ]),
+    )
+    await start($)
+    const ui = await $.ui.mount({
+      plugin: 'agent-quick-menu',
+      surface: 'mobile',
+      component: 'Pane',
+      props: PANE_PROPS,
+      requestId: 'quick-menu',
+    })
+    expect(await ui.find({ text: /mode: a/ })).toBeDefined()
+    expect(await ui.find({ text: /name: x/ })).toBeDefined()
+    expect(await ui.find({ text: /count: 1/ })).toBeDefined()
+    expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
   })
 
   test('an invalid number shows an error and does not call set', async ($, on) => {
@@ -354,7 +474,7 @@ describe('sections', () => {
     const ui = await paneText($)
     const heads = (await ui.findAll({ type: 'Text' }))
       .map((x: any) => x.text as string)
-      .filter(t => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
+      .filter((t: string) => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
     expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
   })
@@ -403,6 +523,17 @@ describe('favourites', () => {
     expect(store.get('favourites')).toEqual([pinned[1]])
   })
 
+  test('a pin made by another session is not lost by a toggle here', async ($, on) => {
+    const store = new Map<string, unknown>()
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await paneText($)
+    const other = { kind: 'command', plugin: 'alpha', key: 'stop' }
+    store.set('favourites', [other])
+    await ui.press({ key: 'star:set:alpha.flag' })
+    expect(store.get('favourites')).toEqual([other, { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' }])
+  })
+
   test('the Favourites section comes first and keeps pin order', async ($, on) => {
     const store = new Map<string, unknown>([['favourites', [
       { kind: 'setting', plugin: 'alpha', key: 'alpha.name' },
@@ -413,7 +544,7 @@ describe('favourites', () => {
     const ui = await paneText($)
     const texts = await textsOf(ui)
     expect(texts.indexOf('Favourites')).toBe(0)
-    const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter(k => k?.startsWith('fav:') && !k.includes('star'))
+    const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter((k: string) => k?.startsWith('fav:') && !k.includes('star'))
     expect(keys).toEqual(['fav:set:alpha.name', 'fav:cmd:alpha:stop:'])
   })
 
@@ -453,7 +584,7 @@ describe('band', () => {
     expect(buttons.map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
       ['☰ menu', 'm'],
       ['Go', '1'],
-      ['flag: off', '2'],
+      ['flag: off', undefined],
     ])
   })
 
@@ -477,6 +608,38 @@ describe('band', () => {
     const ui = await mountBand($)
     await ui.press({ key: 'band:2' })
     expect(sets).toMatchObject([{ key: 'alpha.flag', value: true }])
+  })
+
+  test('band width counts code points and keeps 4 cells for [-]', async ($, on) => {
+    const fav = [
+      { kind: 'command', plugin: 'alpha', key: 'go --all' },
+      { kind: 'command', plugin: 'alpha', key: 'stop' },
+    ]
+    const store = new Map<string, unknown>([['favourites', fav]])
+    stub(on, FAV_WORLD({ store }))
+    emptyBase(on)
+    await start($)
+    // menu: 6 + 5 = 11; reserve 4; Go: 2 + 5 = 7 -> 22; stop: 4 + 5 = 9 -> 31.
+    const labels = async (columns: number) =>
+      (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).map(
+        (b: any) => b.props.label,
+      )
+    expect(await labels(31)).toEqual(['☰ menu', 'Go', 'stop'])
+    expect(await labels(30)).toEqual(['☰ menu', 'Go'])
+    expect(await labels(21)).toEqual(['☰ menu'])
+  })
+
+  test('only command favourites get digit hotkeys', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [
+      { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
+      { kind: 'command', plugin: 'alpha', key: 'stop' },
+    ]]])
+    stub(on, FAV_WORLD({ store }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    const buttons = await ui.findAll({ type: 'Button' })
+    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['m', undefined, '1'])
   })
 
   test('the menu button opens the pane', async ($, on) => {
