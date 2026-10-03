@@ -600,10 +600,15 @@ async function putEditor($: EngineInterface, id: string, draft = ''): Promise<vo
   await update($, editDraft, () => draft)
 }
 
-/** Opens the editor of row `id` (with `draft` in a text one), or closes every one with ''; draws. */
-async function setOpenEditor($: EngineInterface, id: string, draft = ''): Promise<void> {
+/**
+ * Opens the editor of row `id` (with `draft` in a text one), or closes every one with ''; draws. `focusKey`: the element that
+ * takes the focus ring once drawn (the pressed button keeps it otherwise, and `autoFocus` does not move a ring the press set).
+ */
+async function setOpenEditor($: EngineInterface, id: string, draft = '', focusKey = ''): Promise<void> {
   await putEditor($, id, draft)
   $.ui.invalidate('ui.render')
+  // Best effort: a test engine with no site holding the keys has nothing behind `ui.focus` and rejects.
+  if (id && focusKey) await $.ui.focus({ requestId: PANE_ID, key: focusKey }).catch(() => ({}))
 }
 
 /** Keeps what the person typed, so the save button knows it; the field already shows it, so no redraw. */
@@ -803,7 +808,7 @@ function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: reado
   const { row, id, label, shown } = v
   const open = ctx.open === id
   const toggle = (
-    <Button key={id} label={`${shown} ${open ? '▴' : '▾'}`} plain onPress={() => void setOpenEditor($, open ? '' : id)} />
+    <Button key={id} label={`${shown} ${open ? '▴' : '▾'}`} plain onPress={() => void setOpenEditor($, open ? '' : id, '', `${id}:${shown}`)} />
   )
   const head = (
     <Box key={`choice:${id}`} flexDirection="row">
@@ -819,6 +824,7 @@ function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: reado
         key={`${id}:${value}`}
         label={`${value === shown ? '●' : '○'} ${value}`}
         plain
+        autoFocus={value === shown ? true : undefined}
         onPress={() => void (value === shown ? setOpenEditor($, '') : pickChoice($, row, value))}
       />
     </Box>
@@ -852,7 +858,7 @@ function renderTextEdit($: EngineInterface, ui: Ui, v: SettingView, Input: NonNu
     const control = (
       <Box key={`field:${id}`} flexDirection="row">
         <Text>{`${label}  `}</Text>
-        <Button key={id} label={`${shown} ✎`} plain onPress={() => void setOpenEditor($, id, shown)} />
+        <Button key={id} label={`${shown} ✎`} plain onPress={() => void setOpenEditor($, id, shown, id)} />
       </Box>
     )
     return { control, cells: width(label) + 2 + width(shown) + 2 }

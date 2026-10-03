@@ -19,6 +19,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Fixed
 
+- Opening a text or number editor puts the focus on its Input, and opening a choice puts it on the current option, so typing and Enter work without a click first (keys no longer fall through to the main prompt).
 - A `choice` setting opens an inline row of option Buttons (`● current`, `○ other`) that can be clicked or Entered, instead of a Select list; the stray `:` before the value is gone, and picking the current option only collapses the row without writing.
 - Changing a setting no longer shows a red "not changed" beside the row every time. In an interactive session `/config` run from a plugin answers with no text, so the menu now reads the row back after the write: a row that holds the new value (or the value a hook clamped it to) is a success. A row's note clears on its next write, is no longer drawn once the row shows another value, and is cleared when the pane is opened again.
 

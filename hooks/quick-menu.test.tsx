@@ -703,6 +703,15 @@ describe('settings', () => {
     expect(await ui.findAll({ key: 'set:alpha.other:y' })).toHaveLength(1)
   })
 
+  test('opening a choice focuses its current option', async ($, on) => {
+    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'b', options: ['a', 'b'] })]))
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: 'set:alpha.mode' })
+    expect((await ui.find({ key: 'set:alpha.mode:b' })).props.autoFocus).toBe(true)
+    expect((await ui.find({ key: 'set:alpha.mode:a' })).props.autoFocus).toBeUndefined()
+  })
+
   test('pressing the current option only collapses; another option writes once and collapses', async ($, on) => {
     const { sets, set } = recordSets()
     stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set }))
@@ -882,6 +891,14 @@ describe('settings', () => {
       await ui.press({ key: 'set:alpha.count' })
       expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
       expect((await ui.find({ key: 'set:alpha.count' })).type).toBe('Input')
+    })
+
+    test('the editor Input takes the focus at once', async ($, on) => {
+      stub(on, edited().world)
+      await start($)
+      const ui = await mountPane($)
+      await ui.press({ key: 'set:alpha.name' })
+      expect((await ui.find({ key: 'set:alpha.name' })).props.autoFocus).toBe(true)
     })
 
     test('cancel discards the typed text, closes and writes nothing', async ($, on) => {
