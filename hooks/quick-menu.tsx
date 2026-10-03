@@ -71,8 +71,13 @@ type Target = { name: string; root: string }
 
 let sessionCwd = ''
 
-/** Roots of `--plugin-dir` plugins, learned from `plugin.register` (the only place the types hand out another plugin's `root`). */
+/**
+ * Roots of `--plugin-dir` plugins, learned from `plugin.register` (the only place the types hand out another plugin's `root`).
+ * `plugin.register` fires once per load of the other plugin, never again when this module reloads, so the roots are kept in
+ * `$.state` (which outlives a reload) as well as here (which outlives a new session in the same process).
+ */
 const inlineRoots = new Map<string, string>()
+const inlineRootState = atom({ plugin: 'agent-quick-menu', key: 'inlineRoots' } as const, {} as Record<string, string>)
 
 /** The plugin name without its `@<marketplace>` suffix. */
 const bareName = (id: string): string => id.split('@')[0] ?? id
@@ -124,6 +129,7 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
   return targets
 }
 
+/** `--plugin-dir` folders: `CLAUDE_CODE_PLUGIN_DIRS`, then the roots `plugin.register` handed out. */
 async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Target[]> {
   const raw = await $.env.get('CLAUDE_CODE_PLUGIN_DIRS')
   const targets: Target[] = []
@@ -137,7 +143,13 @@ async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Tar
       found.push({ plugin: root, message: `cannot identify plugin dir: ${message(err)}` })
     }
   }
-  for (const [name, root] of inlineRoots) targets.push({ name, root })
+  let kept: Record<string, string> = {}
+  try {
+    kept = await read($, inlineRootState)
+  } catch {
+    kept = {}
+  }
+  for (const [name, root] of [...inlineRoots, ...Object.entries(kept)]) targets.push({ name, root })
   return targets
 }
 
@@ -185,10 +197,18 @@ function commandSections(listed: readonly CommandInfo[], targets: readonly Targe
   }))
 }
 
-/** Reads every enabled plugin's menu file and builds the file sections; failures become problems. */
+/**
+ * Reads every enabled plugin's menu file and builds the file sections; failures become problems.
+ * The first root per name wins: this plugin's own (`$.plugin.root`, which `plugin.register` never hands it), then the
+ * `--plugin-dir` folders, then the installed copies they shadow.
+ */
 export async function discover($: EngineInterface): Promise<{ sections: MenuSection[]; problems: MenuProblem[] }> {
   const found: MenuProblem[] = []
-  const all = [...(await registryTargets($, found)), ...(await dirTargets($, found))]
+  const all = [
+    { name: $.plugin.name, root: $.plugin.root },
+    ...(await dirTargets($, found)),
+    ...(await registryTargets($, found)),
+  ]
   const targets = all.filter((t, i) => all.findIndex(o => o.name === t.name) === i)
 
   let listed: CommandInfo[] = []
@@ -223,20 +243,52 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
   return { sections: result, problems: found }
 }
 
-async function runDiscovery($: EngineInterface): Promise<void> {
+let discoveryRun = 0
+
+/** Discovers and stores the sections; a run overtaken by a later one leaves the later one's answer standing. */
+async function runDiscovery($: EngineInterface): Promise<{ sections: number; problems: number } | null> {
+  const run = ++discoveryRun
   const found = await discover($)
+  if (run !== discoveryRun) return null
   await update($, sections, () => found.sections)
   await update($, problems, () => found.problems)
+  $.ui.invalidate('ui.render')
+  return { sections: found.sections.length, problems: found.problems.length }
 }
 
+/** Starts a discovery without holding the dispatch that asked for it; `done` gets its counts, failures a toast. */
+function startDiscovery($: EngineInterface, done?: (counts: { sections: number; problems: number }) => void): void {
+  void runDiscovery($).then(
+    counts => counts && done?.(counts),
+    err => $.ui.toast(toastLine(`Quick menu: discovery failed: ${message(err)}`)),
+  )
+}
+
+/** `/menu`: opens the pane, or starts a refresh, and answers at once; discovery runs on its own and redraws when it lands. */
 async function openMenu($: EngineInterface, args: string): Promise<{ text: string }> {
   if (args.trim() === 'refresh') {
-    await runDiscovery($)
-    const [s, p] = [await read($, sections), await read($, problems)]
-    return { text: `Quick menu refreshed: ${s.length} sections, ${p.length} problems` }
+    startDiscovery($, c => $.ui.toast(`Quick menu refreshed: ${c.sections} sections, ${c.problems} problems`))
+    return { text: 'Quick menu: discovering plugin menus again' }
   }
   await openPane($)
   return { text: 'Quick menu opened' }
+}
+
+/** Commands this plugin registers; the menu answers them itself (runAny). */
+const OWN_COMMANDS = new Set(['menu'])
+
+/**
+ * Runs a command a row or the band names. This plugin's own are answered here: the engine leaves a plugin's own hooks
+ * out of the `command.run` its own `$.command.run` raises (re-entry), so that call would reach the engine's
+ * "registered /menu but no command.run hook answered it".
+ */
+async function runAny($: EngineInterface, c: SectionCommand): Promise<{ text?: string }> {
+  if (OWN_COMMANDS.has(c.command)) {
+    const answer = await openMenu($, c.args ?? '')
+    // A refresh toasts its counts when discovery lands; a toast now would push that one out (toasts are spaced 2 s).
+    return (c.args ?? '').trim() === 'refresh' ? {} : answer
+  }
+  return $.command.run({ command: c.command, ...(c.args !== undefined && { args: c.args }) })
 }
 
 type Note = { kind: 'deny' | 'error'; text: string }
@@ -282,7 +334,7 @@ async function runCommand($: EngineInterface, plugin: string, c: SectionCommand)
   if (!claimed) return
   $.ui.invalidate('ui.render')
   try {
-    const result = await $.command.run({ command: c.command, ...(c.args !== undefined && { args: c.args }) })
+    const result = await runAny($, c)
     if (result.text) $.ui.toast(toastLine(result.text))
   } catch (err) {
     $.ui.toast(toastLine(message(err)))
@@ -850,8 +902,11 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
 }
 
 export const register: Register = on => {
-  on('plugin.register', ($, e, next) => {
-    if (e.provenance.endsWith('@inline')) inlineRoots.set(e.name, e.root)
+  on('plugin.register', async ($, e, next) => {
+    if (e.provenance.endsWith('@inline')) {
+      inlineRoots.set(e.name, e.root)
+      await update($, inlineRootState, m => ({ ...m, [e.name]: e.root }))
+    }
     return next(e)
   })
 
@@ -867,8 +922,11 @@ export const register: Register = on => {
       description: 'Open the quick menu (refresh: discover plugin menus again)',
       argumentHint: '[refresh]',
     })
-    await runDiscovery($)
-    return next(e)
+    // After next(e): the plugins beneath register their commands in their own session.start, and discovery marks
+    // a command missing from $.command.list() unavailable. Not awaited: the session does not wait on file reads.
+    const result = await next(e)
+    startDiscovery($)
+    return result
   })
 
   on('command.run', { command: 'menu' }, ($, e) => openMenu($, e.args ?? ''))

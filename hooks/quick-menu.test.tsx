@@ -29,7 +29,15 @@ type World = {
   open?: (e: unknown) => void
   placed?: false
   store?: Map<string, unknown>
+  /** The menu's own quick-menu.json, answered for the one path outside `files` ending in it (the plugin's own root). */
+  self?: string
+  /** Runs inside the stub's session.start, as a plugin beneath registering its commands there. */
+  onStart?: () => void
+  /** Delays `$.command.list()` by this many ms (a slow discovery). */
+  listDelay?: number
 }
+
+const MENU_FILE = '/.claude-plugin/quick-menu.json'
 
 function stub(on: any, w: World) {
   const files = (): Record<string, string> => ({
@@ -37,7 +45,7 @@ function stub(on: any, w: World) {
     ...(w.registry && { [REGISTRY]: JSON.stringify({ version: 2, plugins: w.registry }) }),
   })
   const env = (): Record<string, string> => ({ HOME, ...w.env })
-  on('session.start', () => ({ cwd: '/tmp' }))
+  on('session.start', () => (w.onStart?.(), { cwd: '/tmp' }))
   on('command.register', () => ({ value: undefined }))
   on('ui.open', (_$: unknown, e: unknown) => (
     w.open?.(e),
@@ -52,18 +60,21 @@ function stub(on: any, w: World) {
   })
   on('settings.read', () => ({ value: { enabledPlugins: w.enabled ?? {} } }))
   on('env.get', (_$: unknown, e: { name: string }) => ({ value: env()[e.name] }))
-  on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() }))
+  const isSelf = (path: string): boolean => w.self !== undefined && !(path in files()) && path.endsWith(MENU_FILE)
+  on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() || isSelf(e.path) }))
   on('fs.read', (_$: unknown, e: { path: string }) => {
+    if (isSelf(e.path)) return { value: w.self }
     const f = files()
     if (!(e.path in f)) throw new Error(`ENOENT ${e.path}`)
     return { value: f[e.path] }
   })
-  on('command.list', () => ({
-    value: [
+  on('command.list', async () => {
+    if (w.listDelay) await new Promise(r => setTimeout(r, w.listDelay as number))
+    return { value: [
       ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin' })),
       ...(w.pluginCommands ?? []).map(c => ({ description: '', source: 'plugin', ...c })),
-    ],
-  }))
+    ] }
+  })
   on('config.list', () => ({ value: w.rows ?? [] }))
   on('command.run', (_$: unknown, e: { command: string; args?: string }) => {
     if (e.command === 'menu') return undefined
@@ -278,17 +289,22 @@ describe('discovery', () => {
     expect(await ui.find({ text: /two: cannot identify plugin dir/ })).toBeDefined()
   })
 
-  test('/menu refresh reruns discovery', async ($, on) => {
+  test('/menu refresh reruns discovery and toasts the counts when it lands', async ($, on) => {
+    const toasts: string[] = []
+    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
     const world: World = { enabled: {}, registry: {} }
     stub(on, world)
     await start($)
     const before = await $.command.run({ command: 'menu', args: 'refresh' } as never)
-    expect(before.text).toMatch(/0 sections/)
+    expect(before.text).toMatch(/discovering/)
+    await new Promise(r => setTimeout(r, 50))
+    expect(toasts.at(-1)).toMatch(/0 sections/)
     world.enabled = { 'late@m': true }
     world.registry = { 'late@m': [{ installPath: '/p/late' }] }
     world.files = { '/p/late/.claude-plugin/quick-menu.json': file({ version: 1 }) }
-    const after = await $.command.run({ command: 'menu', args: 'refresh' } as never)
-    expect(after.text).toMatch(/1 sections, 0 problems/)
+    await $.command.run({ command: 'menu', args: 'refresh' } as never)
+    await new Promise(r => setTimeout(r, 50))
+    expect(toasts.at(-1)).toMatch(/1 sections, 0 problems/)
   })
 })
 
@@ -955,5 +971,101 @@ describe('live feedback round 1', () => {
     const tags = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.text === 'built-in')
     expect(tags).toHaveLength(1)
     expect(tags[0].props.dimColor).toBe(true)
+  })
+})
+
+const SELF_FILE = file({
+  version: 1,
+  title: 'Quick menu',
+  commands: [{ command: 'menu', label: 'Refresh', args: 'refresh' }],
+  settings: [],
+})
+
+describe('live feedback round 2', () => {
+  test('a row naming /menu is answered by the menu itself, not by $.command.run (the engine skips own hooks on re-entry)', async ($, on) => {
+    const toasts: string[] = []
+    const runs: { command: string }[] = []
+    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    stub(on, {
+      registry: {},
+      self: SELF_FILE,
+      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
+      run: e => (runs.push(e), { text: 'agent-quick-menu registered /menu but no command.run hook answered it' }),
+    })
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'cmd:agent-quick-menu:menu:refresh' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(runs.filter(r => r.command === 'menu')).toHaveLength(0)
+    expect(toasts.join('\n')).not.toMatch(/no command\.run hook answered/)
+    expect(toasts.at(-1)).toMatch(/Quick menu refreshed: \d+ sections/)
+    expect(toasts.filter(t => /discovering/.test(t))).toHaveLength(0)
+  })
+
+  test('/menu answers at once while a slow discovery is still running', async ($, on) => {
+    stub(on, { registry: {}, listDelay: 400 })
+    await start($)
+    const t0 = Date.now()
+    const opened = await $.command.run({ command: 'menu' } as never)
+    expect(opened.text).toBe('Quick menu opened')
+    expect(Date.now() - t0).toBeLessThan(300)
+    const refreshed = await $.command.run({ command: 'menu', args: 'refresh' } as never)
+    expect(refreshed.text).toMatch(/discovering/)
+    expect(Date.now() - t0).toBeLessThan(300)
+    await new Promise(r => setTimeout(r, 900))
+  })
+
+  // The test kit raises no plugin.register, so the --plugin-dir root comes in through CLAUDE_CODE_PLUGIN_DIRS, ranked with it.
+  test('a --plugin-dir root shadows the installed copy of the same plugin, and its menu file is read', async ($, on) => {
+    stub(on, {
+      enabled: { 'repo-tools@mk': true },
+      registry: { 'repo-tools@mk': [{ scope: 'user', installPath: '/p/rt-installed' }] },
+      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/rt' },
+      files: {
+        '/dev/rt/.claude-plugin/plugin.json': file({ name: 'repo-tools' }),
+        '/dev/rt/.claude-plugin/quick-menu.json': file({
+          version: 1,
+          title: 'repo-tools',
+          commands: [{ command: 'rt-status', label: 'Status' }, { command: 'rt-pull', label: 'Pull all', args: '--all' }],
+        }),
+      },
+      commands: ['rt-status', 'rt-pull'],
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ repo-tools$/ })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:--all' })).toBeDefined()
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS/ })).toBeUndefined()
+  })
+
+  test('commands a plugin beneath registers in its own session.start are available, not "not available"', async ($, on) => {
+    const world: World = {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
+      commands: [],
+    }
+    world.onStart = () => {
+      world.commands = ['late']
+    }
+    stub(on, world)
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
+    expect(await ui.find({ text: /not available/ })).toBeUndefined()
+  })
+
+  test('the menu reads its own quick-menu.json from $.plugin.root, with no --plugin-dir note', async ($, on) => {
+    stub(on, {
+      registry: {},
+      self: SELF_FILE,
+      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ Quick menu$/ })).toBeDefined()
+    expect((await ui.find({ key: 'cmd:agent-quick-menu:menu:refresh' })).props.label).toBe('Refresh')
+    expect(await ui.find({ key: 'cmd:agent-quick-menu:menu:' })).toBeUndefined()
+    expect(await ui.find({ text: /loaded with --plugin-dir/ })).toBeUndefined()
   })
 })

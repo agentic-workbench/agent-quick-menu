@@ -61,6 +61,8 @@ declare module 'claude-code' {
       folded: Record<string, boolean>
       unplaced: boolean
       filter: string
+      /** `--plugin-dir` plugin name to root, from `plugin.register`, kept across a reload of this module. */
+      inlineRoots: Record<string, string>
     }
   }
 }

@@ -58,7 +58,8 @@ The full format is in [docs/convention.md](docs/convention.md).
 ## Limitations
 
 - There is no global hotkey; the band hotkeys work only while the band is focused or the prompt is empty.
-- A `--plugin-dir` plugin's root is only learned when its hooks module loads after this one (`plugin.register`); a plugin without one, or loaded earlier, is listed from `$.command.list()` with its commands only. Set `CLAUDE_CODE_PLUGIN_DIRS` to the same folder to read its `quick-menu.json`.
+- A `--plugin-dir` plugin's root is only learned when its hooks module loads after this one (`plugin.register`; kept across a reload of the menu); a plugin without one, or loaded earlier, is listed from `$.command.list()` with its commands only. Set `CLAUDE_CODE_PLUGIN_DIRS` to the same folder to read its `quick-menu.json`. A `--plugin-dir` copy shadows an installed copy of the same plugin. The menu reads its own file from its own folder.
+- Discovery runs in the background, after every plugin's `session.start` and on `/menu refresh` (which toasts the counts when it is done), so `/menu` answers at once. Under `claude -p` a refresh ends with the run and is not shown.
 - Settings that are not shown in `/config` are not shown here.
 - A favourite setting that is not boolean opens the pane instead of toggling.
 
