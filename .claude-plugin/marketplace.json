@@ -3,8 +3,8 @@
   "name": "agent-quick-menu",
   "description": "Quick menu for Claude Code: every plugin's commands and settings in one pane.",
   "owner": {
-    "name": "dasganni",
-    "url": "https://github.com/dasganni"
+    "name": "agentic-workbench",
+    "url": "https://github.com/agentic-workbench"
   },
   "plugins": [
     {

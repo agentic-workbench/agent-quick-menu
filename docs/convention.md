@@ -2,7 +2,7 @@
 
 A plugin lists its quick-launch commands and settings for agent-quick-menu in `.claude-plugin/quick-menu.json`. The file is read only while agent-quick-menu is installed; it costs nothing otherwise.
 
-Schema: `https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json` (set it as `$schema` for editor completion).
+Schema: `https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json` (set it as `$schema` for editor completion).
 
 ## Fields
 
@@ -55,7 +55,7 @@ A mod plugin with registered commands:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
   "title": "Runtime tools",
   "commands": [
@@ -69,7 +69,7 @@ A skills-only plugin with `userConfig`:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
   "commands": [
     { "command": "notes:daily", "label": "Daily note" },

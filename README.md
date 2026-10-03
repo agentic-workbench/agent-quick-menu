@@ -13,7 +13,7 @@ Claude Code 2.1.287 or newer, in the terminal or the Desktop Code tab. The VS Co
 The repository is private for now, so SSH or the `gh` credential helper must be set up for git.
 
 ```
-claude plugin marketplace add dasganni/agent-quick-menu
+claude plugin marketplace add agentic-workbench/agent-quick-menu
 claude plugin install agent-quick-menu@agent-quick-menu
 ```
 
@@ -47,7 +47,7 @@ Add `.claude-plugin/quick-menu.json` to your plugin:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
   "commands": [{ "command": "my-plugin:status", "label": "Status" }]
 }

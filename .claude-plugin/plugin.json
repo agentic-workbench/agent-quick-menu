@@ -7,8 +7,8 @@
     "name": "dasganni",
     "url": "https://github.com/dasganni"
   },
-  "homepage": "https://github.com/dasganni/agent-quick-menu",
-  "repository": "https://github.com/dasganni/agent-quick-menu",
+  "homepage": "https://github.com/agentic-workbench/agent-quick-menu",
+  "repository": "https://github.com/agentic-workbench/agent-quick-menu",
   "license": "MIT",
   "types": "./types/index.d.ts"
 }

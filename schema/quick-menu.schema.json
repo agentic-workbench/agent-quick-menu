@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "$id": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "title": "agent-quick-menu plugin menu file",
   "description": "A plugin's .claude-plugin/quick-menu.json: quick-launch commands and settings shown in the quick menu.",
   "type": "object",
