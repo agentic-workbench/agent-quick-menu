@@ -20,7 +20,15 @@
           "command": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^(?=.*\\S)[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Command name as / takes it, without the slash." },
           "label": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^(?=.*\\S)[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Button text; default the command." },
           "args": { "type": "string", "maxLength": 500, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Arguments passed as typed; one line." },
-          "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Dimmed help text." }
+          "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Dimmed help text." },
+          "ask": {
+            "type": "object",
+            "description": "Ask for more arguments when pressed: an input opens with the default typed in, and what is typed is appended to args.",
+            "properties": {
+              "placeholder": { "type": "string", "maxLength": 60, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Shown in the empty input." },
+              "default": { "type": "string", "maxLength": 500, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Text the input starts with." }
+            }
+          }
         }
       }
     },

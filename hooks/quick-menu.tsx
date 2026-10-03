@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { CommandInfo, ConfigRow, ConfigValue, Elements, EngineInterface, Register, RenderElement, RenderInput, RenderNode } from 'claude-code'
 
-import type { Favourite, MenuCommand, MenuFile, MenuProblem, MenuSection, Note, RowState, SectionCommand } from '../types'
+import type { Favourite, MenuAsk, MenuCommand, MenuFile, MenuProblem, MenuSection, Note, RowState, SectionCommand } from '../types'
 
 const PANE_ID = 'quick-menu'
 const MENU_FILE = '.claude-plugin/quick-menu.json'
@@ -66,7 +66,7 @@ const MAX_FAVOURITES = 50
 const MAX_SHOWN_COMMANDS = 30
 const MAX_PROBLEM = 300
 const CONFIRM_MS = 5000
-const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200, setting: 64 } as const
+const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200, setting: 64, askPlaceholder: 60, askDefault: 500, input: 500 } as const
 /** Control, line, bidi and zero-width characters: never shown, never accepted. */
 const BAD_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u
 const BAD_CHARS_ALL = new RegExp(BAD_CHARS.source, 'gu')
@@ -102,6 +102,19 @@ function textError(where: string, value: unknown, max: number, nonBlank = false)
   return null
 }
 
+function validateAsk(where: string, ask: unknown): { ok: true; value: MenuAsk } | { ok: false; error: string } {
+  if (!isObject(ask)) return { ok: false, error: `${where} must be an object` }
+  const value: MenuAsk = {}
+  for (const [key, max] of [['placeholder', LIMITS.askPlaceholder], ['default', LIMITS.askDefault]] as const) {
+    const field = ask[key]
+    if (field === undefined) continue
+    const error = textError(`${where}.${key}`, field, max)
+    if (error) return { ok: false, error }
+    value[key] = field as string
+  }
+  return { ok: true, value }
+}
+
 function validateCommand(c: unknown, i: number): { ok: true; value: MenuCommand } | { ok: false; error: string } {
   if (!isObject(c)) return { ok: false, error: `commands[${i}] must be an object` }
   const bad = textError(`commands[${i}].command`, c.command, LIMITS.command, true)
@@ -113,6 +126,11 @@ function validateCommand(c: unknown, i: number): { ok: true; value: MenuCommand 
     const error = textError(`commands[${i}].${key}`, field, LIMITS[key], key === 'label')
     if (error) return { ok: false, error }
     value[key] = field as string
+  }
+  if (c.ask !== undefined) {
+    const asked = validateAsk(`commands[${i}].ask`, c.ask)
+    if (!asked.ok) return asked
+    value.ask = asked.value
   }
   return { ok: true, value }
 }
@@ -387,6 +405,7 @@ async function discover($: EngineInterface): Promise<{ sections: MenuSection[]; 
           label: c.label ?? c.command,
           ...(c.args !== undefined && { args: c.args }),
           ...(c.description !== undefined && { description: c.description }),
+          ...(c.ask !== undefined && { ask: c.ask }),
           ...availability(byName.get(c.command)),
         })),
         settings: file.settings,
@@ -499,11 +518,36 @@ async function expireArming($: EngineInterface, id: string, until: number): Prom
   }
 }
 
+/** Where a command button sits: the key prefix of its rows, whether a band press, and whether the surface can draw an Input. */
+type PressSite = { prefix: string; fromBand: boolean; canAsk: boolean }
+const PANE_SITE: PressSite = { prefix: '', fromBand: false, canAsk: true }
+
+/**
+ * The confirm-twice of a command of another plugin or a built-in: the first call arms (the button reads "press again: /x") and
+ * answers false; a second within 5 s answers true. True at once for a command of the section's own plugin.
+ */
+async function isConfirmed($: EngineInterface, plugin: string, c: SectionCommand): Promise<boolean> {
+  if (runsTag(plugin, c) === null) return true
+  const id = commandKey(plugin, c)
+  const now = await $.clock.now()
+  const armed = (await read($, rowState)).armed
+  if (armed.id !== id || now >= armed.until) {
+    const until = now + CONFIRM_MS
+    await update($, rowState, st => ({ ...st, armed: { id, until } }))
+    void expireArming($, id, until)
+    $.ui.invalidate('ui.render')
+    return false
+  }
+  await update($, rowState, st => ({ ...st, armed: DISARMED }))
+  return true
+}
+
 /**
  * A press on a button. A command of another plugin or a built-in first arms (the button reads "press again: /x") and runs
- * on a second press within 5 s, in the pane or the band alike.
+ * on a second press within 5 s, in the pane or the band alike. A command with `ask` opens its row editor instead; the
+ * confirming press is then the one on `✓ run`.
  */
-async function pressCommand($: EngineInterface, plugin: string, shown: SectionCommand): Promise<void> {
+async function pressCommand($: EngineInterface, plugin: string, shown: SectionCommand, site: PressSite = PANE_SITE): Promise<void> {
   let c = shown
   if (!c.isAvailable) {
     // Marked unavailable by a listing that may predate its registration: ask again before refusing.
@@ -517,24 +561,64 @@ async function pressCommand($: EngineInterface, plugin: string, shown: SectionCo
     c = { ...c, ...availability(info) }
     $.ui.invalidate('ui.render')
   }
-  if (runsTag(plugin, c) !== null) {
-    const id = commandKey(plugin, c)
-    const now = await $.clock.now()
-    const armed = (await read($, rowState)).armed
-    if (armed.id !== id || now >= armed.until) {
-      const until = now + CONFIRM_MS
-      await update($, rowState, st => ({ ...st, armed: { id, until } }))
-      void expireArming($, id, until)
-      $.ui.invalidate('ui.render')
-      return
-    }
-    await update($, rowState, st => ({ ...st, armed: DISARMED }))
+  if (c.ask && site.canAsk) {
+    await openAsk($, plugin, c, site)
+    return
   }
-  await runCommand($, plugin, c)
+  if (await isConfirmed($, plugin, c)) await runCommand($, plugin, c)
 }
 
-async function runCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
-  const id = commandKey(plugin, c)
+/** The fixed args, then what was typed, as one trimmed string; undefined when both are empty. */
+function joinArgs(fixed: string | undefined, input: string): string | undefined {
+  const joined = `${(fixed ?? '').trim()} ${input.trim()}`.trim()
+  return joined === '' ? undefined : joined
+}
+
+/**
+ * Opens the editor of a command with `ask`, its default typed in. From the band the pane opens first, with the pinned list
+ * unfolded, since a band row has no room for an input.
+ */
+async function openAsk($: EngineInterface, plugin: string, c: SectionCommand, site: PressSite): Promise<void> {
+  const id = site.prefix + commandKey(plugin, c)
+  if (site.fromBand) {
+    await openPane($)
+    const stored = await storedValue($, FOLDS)
+    if (isFolded(stored, FAV_ID)) await writeFolds($, { ...stored, [FAV_ID]: false })
+  }
+  await setNote($, commandKey(plugin, c), null)
+  await update($, rowState, st => ({ ...st, armed: DISARMED }))
+  await setOpenEditor($, id, c.ask?.default ?? '', id)
+}
+
+/**
+ * `✓ run` or Enter in an ask editor: invalid input says so and stays open; otherwise the confirm-twice of a foreign command
+ * (the editor stays open for the second press), then the editor closes and `/command <args> <input>` runs.
+ */
+async function runAsked($: EngineInterface, plugin: string, c: SectionCommand, raw: string): Promise<void> {
+  const rid = commandKey(plugin, c)
+  const bad = textError('input', raw, LIMITS.input)
+  if (bad) {
+    await setNote($, rid, { kind: 'error', text: bad, shown: '' })
+    await setDraft($, raw)
+    $.ui.invalidate('ui.render')
+    return
+  }
+  await setNote($, rid, null)
+  if (!(await isConfirmed($, plugin, c))) return
+  await putEditor($, '')
+  const args = joinArgs(c.args, raw)
+  const { args: _fixed, ...bare } = c
+  await runCommand($, plugin, args === undefined ? bare : { ...bare, args }, rid)
+}
+
+/** `✕ cancel` in an ask editor: closes it, runs nothing. */
+async function cancelAsk($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
+  await setNote($, commandKey(plugin, c), null)
+  await update($, rowState, st => ({ ...st, armed: DISARMED }))
+  await setOpenEditor($, '')
+}
+
+async function runCommand($: EngineInterface, plugin: string, c: SectionCommand, id = commandKey(plugin, c)): Promise<void> {
   let claimed = false
   await update($, rowState, s => {
     claimed = false
@@ -649,6 +733,11 @@ async function saveEdit($: EngineInterface, row: ConfigRow, raw: string): Promis
 /** The save button: saves what was last typed. */
 async function saveDraft($: EngineInterface, row: ConfigRow): Promise<void> {
   await saveEdit($, row, await read($, editDraft))
+}
+
+/** The `✓ run` button: runs what was last typed. */
+async function runAskedDraft($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
+  await runAsked($, plugin, c, await read($, editDraft))
 }
 
 /** The cancel button: closes the editor without a write, and drops the note an invalid number left. */
@@ -946,6 +1035,41 @@ function commandLabel(plugin: string, c: SectionCommand, state: RowState): strin
   return isArmed ? `press again: /${clip(c.command, LIMITS.command)}` : c.label
 }
 
+type AskView = { plugin: string; c: SectionCommand; id: string; rid: string; runs: string; tag: string | null; state: RowState }
+
+/** An open ask editor: the label, an Input with the default, `✓ run` and `✕ cancel`; under it the hint, the origin tag and a note. */
+function renderAsk($: EngineInterface, ui: Ui, v: AskView, Input: NonNullable<ReturnType<typeof inputOf>>, ctx: RowCtx) {
+  const { Box, Text, Button } = ui
+  const { plugin, c, id, rid, runs, tag, state } = v
+  const note = state.notes[rid]
+  const isArmed = tag !== null && state.armed.id === rid
+  return (
+    <Box key={`row:${id}`} flexDirection="column">
+      <Box flexDirection="row" columnGap={1}>
+        {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, ctx)}
+        <Text>{c.label}</Text>
+        <Input
+          key={id}
+          value={ctx.draft}
+          autoFocus
+          {...(c.ask?.placeholder !== undefined && { placeholder: c.ask.placeholder })}
+          onInput={(value: string) => void setDraft($, value)}
+          onSubmit={(value: string) => void runAsked($, plugin, c, value)}
+        />
+        <Button key={`${id}:run`} label="✓ run" onPress={() => void runAskedDraft($, plugin, c)} />
+        <Button key={`${id}:cancel`} label="✕ cancel" onPress={() => void cancelAsk($, plugin, c)} />
+      </Box>
+      <Box flexDirection="row">
+        <Text>{' '.repeat(STAR_CELLS + 1)}</Text>
+        <Text dimColor>{runs}</Text>
+        {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
+        {isArmed && <Text color="yellow">{'  press ✓ run again'}</Text>}
+        {note && <Text color="red">{`  ${note.text}`}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
 function renderCommand(
   $: EngineInterface,
   ui: Ui,
@@ -958,7 +1082,9 @@ function renderCommand(
   const rid = commandKey(plugin, c)
   const id = ctx.prefix + rid
   const tag = runsTag(plugin, c)
-  const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, MAX_RUNS_HINT)
+  const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}${c.ask ? ' …' : ''}`, MAX_RUNS_HINT)
+  const Input = inputOf(ui)
+  if (c.ask && c.isAvailable && Input && ctx.open === id) return renderAsk($, ui, { plugin, c, id, rid, runs, tag, state }, Input, ctx)
   // The help text takes what is left of the line after star, button, hint and tag.
   const used = STAR_CELLS + Math.max(ctx.cmdPad, width(c.label)) + BUTTON_CHROME + BUTTON_GAP + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
   const help = helpFor(c.isAvailable ? c.description : undefined, ctx.columns - used - SEP_CELLS)
@@ -967,7 +1093,7 @@ function renderCommand(
       {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, ctx)}
       <Text> </Text>
       {c.isAvailable ? (
-        <Button key={id} label={commandLabel(plugin, c, state)} onPress={() => void pressCommand($, plugin, c)} />
+        <Button key={id} label={commandLabel(plugin, c, state)} onPress={() => void pressCommand($, plugin, c, { prefix: ctx.prefix, fromBand: false, canAsk: ctx.hasFields })} />
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
@@ -1157,8 +1283,14 @@ function blockRows(b: Block, isOpen: boolean, d: MenuData): number {
   return 1 + (b.note ? 1 : 0) + shown + (b.commands.length > MAX_SHOWN_COMMANDS ? 1 : 0) + b.rows.length + (hasOpenChoice(b, d) ? 1 : 0)
 }
 
+/** True while a choice row of the block shows its options or an ask editor shows its hint line: each takes a second line. */
 function hasOpenChoice(b: Block, d: MenuData): boolean {
-  return settingsOf(b, d).some(r => r.kind === 'choice' && d.openEditor === prefixOf(b) + settingKey(r.key))
+  const isAsking = (plugin: string, c: SectionCommand | undefined): boolean =>
+    c?.ask !== undefined && d.openEditor === prefixOf(b) + commandKey(plugin, c)
+  const asking = b.favs
+    ? b.favs.some(f => f.kind === 'command' && isAsking(f.plugin, findFavCommand(f, d.all)))
+    : b.commands.some(c => isAsking(b.plugin, c))
+  return settingsOf(b, d).some(r => r.kind === 'choice' && d.openEditor === prefixOf(b) + settingKey(r.key)) || asking
 }
 
 type BlockOptions = { hasFields: boolean; columns: number; showBody?: boolean }
@@ -1277,7 +1409,7 @@ type BandItem = { label: string; action: BandAction; isOwn: boolean; digit?: num
 async function pressBandItem($: EngineInterface, action: BandAction): Promise<void> {
   switch (action.kind) {
     case 'run':
-      return pressCommand($, action.plugin, action.c)
+      return pressCommand($, action.plugin, action.c, { prefix: 'fav:', fromBand: true, canAsk: true })
     case 'toggle':
       return writeSetting($, action.row, !action.row.value)
     case 'open':

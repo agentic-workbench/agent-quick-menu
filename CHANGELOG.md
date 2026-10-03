@@ -6,6 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
+- Optional `ask` on a command entry (`placeholder`, `default`): pressing it opens the row editor with the default typed in and `✓ run` / `✕ cancel`, and runs `/command <args> <input>`. A band favourite with `ask` opens the pane at its row with the editor open. The input is one line without control, bidi or zero-width characters, at most 500; the confirm-twice of a foreign command applies to `✓ run`. Format version stays 1.
 - Text and number settings show `value ✎`; a press opens an Input with `✓ save` and `✕ cancel`. Save writes once (an unchanged value only closes, an invalid number says so and stays open); cancel discards the typed text. Escape does not cancel, since the API has no hook for it. One editor is open at a time, and a row's description is hidden while its picker or editor is open.
 - The schema and the validator hold a setting name to 64 characters without control, bidi or zero-width characters, and a title to more than blanks, so "every displayed string" holds.
 - `make check` runs `node scripts/check-json.mjs` and type-checks with `tsc` from PATH or else `npx -y -p typescript@5 tsc`; it skips tsc, with a message, only while the API types are missing.

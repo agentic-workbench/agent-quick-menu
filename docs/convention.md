@@ -22,6 +22,9 @@ Each entry of `commands`:
 | `label` | string | the command | Button text. |
 | `args` | string | none | Arguments passed as typed. |
 | `description` | string | none | Dimmed help text. |
+| `ask` | object | none | Ask for more arguments when pressed (see below). |
+
+`ask` is an object whose keys are both optional (`{}` is allowed): `placeholder` (string, shown in the empty input) and `default` (string, typed in when the input opens). Pressing the command opens an input with `✓ run` and `✕ cancel`; Enter or `✓ run` runs `/command <args> <input>` (the fixed `args` first, the input appended, trimmed; an empty input runs with `args` alone). The input must be one line without the rejected characters below and at most 500 characters, else a note appears and it stays open. The row hint reads `/command <args> …`. A pinned command with `ask` opens the pane at its row with the input open.
 
 ## Command names
 
@@ -39,8 +42,8 @@ Check a name by typing `/` in Claude Code. A command that is not available is hi
 
 ## Limits
 
-- Rejected characters, in every displayed string (`title`, `label`, `command`, `args`, `description` and each `settings` name): control characters, line and paragraph separators, format characters (bidi marks, zero-width characters, soft hyphen, tag characters), private-use characters and variation selectors. A file holding one is skipped and reported under Problems.
-- Lengths, counted in code points: `title` 60, `label` 40, `command` 64, `args` 500, `description` 200, a `settings` name 64. `title`, `label`, `command` and each `settings` name may not be blank.
+- Rejected characters, in every displayed string (`title`, `label`, `command`, `args`, `description`, `ask.placeholder`, `ask.default` and each `settings` name): control characters, line and paragraph separators, format characters (bidi marks, zero-width characters, soft hyphen, tag characters), private-use characters and variation selectors. A file holding one is skipped and reported under Problems.
+- Lengths, counted in code points: `title` 60, `label` 40, `command` 64, `args` 500, `description` 200, `ask.placeholder` 60, `ask.default` 500, a `settings` name 64. `title`, `label`, `command` and each `settings` name may not be blank.
 - At most 50 `commands` and 50 `settings`.
 - The file must be a regular file of at most 64 KiB, not a symlink.
 - Reserved titles: `Claude Code`, `Favourites`, `built-in`, and the name of another plugin, in any case.
@@ -69,7 +72,8 @@ A mod plugin with registered commands:
   "title": "Runtime tools",
   "commands": [
     { "command": "rt-status", "label": "Status", "description": "Show runtime state" },
-    { "command": "rt-reset", "label": "Reset", "args": "--soft" }
+    { "command": "rt-reset", "label": "Reset", "args": "--soft" },
+    { "command": "rt-branch", "label": "Switch branch", "args": "--all", "ask": { "placeholder": "branch name", "default": "develop" } }
   ]
 }
 ```

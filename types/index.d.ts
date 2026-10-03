@@ -1,12 +1,16 @@
 /** Schema version of the menu file a plugin ships at `.claude-plugin/quick-menu.json`. */
 export type QuickMenuVersion = 1
 
+/** A command that asks for arguments when pressed: the hint shown in the empty field and the text it starts with. */
+export type MenuAsk = { placeholder?: string; default?: string }
+
 /** One quick-launch command of a menu file, as `/` would take it, without the slash. */
 export type MenuCommand = {
   command: string
   label?: string
   args?: string
   description?: string
+  ask?: MenuAsk
 }
 
 /** A validated menu file. `settings: null` means all of the plugin's `userConfig` rows. */
@@ -23,6 +27,7 @@ export type SectionCommand = {
   label: string
   args?: string
   description?: string
+  ask?: MenuAsk
   isAvailable: boolean
   /** From `$.command.list()`: where the command comes from and, for a plugin's, which plugin (no `@marketplace`). */
   source?: 'builtin' | 'plugin' | 'user' | 'mcp'

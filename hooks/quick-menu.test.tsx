@@ -1699,6 +1699,149 @@ describe('security: what a button runs', () => {
   })
 })
 
+describe('command arguments (ask)', () => {
+  const ASKING = {
+    ...ALPHA,
+    files: alphaFile({
+      version: 1,
+      commands: [
+        { command: 'go', args: '--all', ask: { placeholder: 'branch', default: 'develop' } },
+        { command: 'bare', ask: {} },
+        { command: 'clear', ask: { default: 'x' } },
+      ],
+    }),
+    commands: ['go', 'bare'],
+    builtins: ['clear'],
+  }
+  const GO = 'cmd:alpha:go:--all'
+  const calls = () => {
+    const seen: { command: string; args?: string }[] = []
+    return { seen, run: (e: { command: string; args?: string }) => (seen.push(e), { text: 'ok' }) }
+  }
+
+  test('the validator accepts ask and rejects bad ones', () => {
+    const ok = (ask: unknown) => validateMenuFile({ version: 1, commands: [{ command: 'a', ask }] })
+    expect(ok({})).toMatchObject({ ok: true })
+    expect(ok({ placeholder: 'p'.repeat(60), default: 'd'.repeat(500) })).toMatchObject({ ok: true, value: { commands: [{ ask: { placeholder: 'p'.repeat(60) } }] } })
+    for (const ask of ['x', [], null, { placeholder: 1 }, { default: 2 }, { placeholder: 'p'.repeat(61) }, { default: 'd'.repeat(501) }, { default: 'a\nb' }, { placeholder: 'a\u202eb' }]) {
+      expect(ok(ask)).toMatchObject({ ok: false })
+    }
+  })
+
+  test('pressing opens the focused editor with the default and runs nothing', async ($, on) => {
+    const { seen, run } = calls()
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: GO })
+    const input = await ui.find({ key: GO })
+    expect(input.type).toBe('Input')
+    expect(input.props).toMatchObject({ value: 'develop', placeholder: 'branch', autoFocus: true })
+    expect(await ui.find({ key: `${GO}:run` })).toBeDefined()
+    expect(await ui.find({ key: `${GO}:cancel` })).toBeDefined()
+    expect(await ui.find({ text: /\/go --all …/ })).toBeDefined()
+    expect(seen).toEqual([])
+  })
+
+  test('run appends the input to the fixed args; Enter runs too', async ($, on) => {
+    const { seen, run } = calls()
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: GO })
+    await ui.input({ key: GO, text: ' feature/x ', kind: 'change' })
+    await ui.press({ key: `${GO}:run` })
+    expect(seen).toMatchObject([{ command: 'go', args: '--all feature/x' }])
+    expect((await ui.find({ key: GO })).type).toBe('Button')
+    await ui.press({ key: GO })
+    await ui.input({ key: GO, text: 'y', kind: 'submit' })
+    expect(seen[1]).toMatchObject({ command: 'go', args: '--all y' })
+  })
+
+  test('empty input runs with the fixed args only, or with none', async ($, on) => {
+    const { seen, run } = calls()
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: GO })
+    await ui.input({ key: GO, text: '', kind: 'change' })
+    await ui.press({ key: `${GO}:run` })
+    await ui.press({ key: 'cmd:alpha:bare:' })
+    await ui.press({ key: 'cmd:alpha:bare::run' })
+    expect(seen).toMatchObject([{ command: 'go', args: '--all' }, { command: 'bare' }])
+  })
+
+  test('cancel closes and runs nothing', async ($, on) => {
+    const { seen, run } = calls()
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: GO })
+    await ui.press({ key: `${GO}:cancel` })
+    expect(seen).toEqual([])
+    expect((await ui.find({ key: GO })).type).toBe('Button')
+  })
+
+  test('invalid input shows a note and stays open', async ($, on) => {
+    const { seen, run } = calls()
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: GO })
+    for (const text of ['a\nb', 'a\u202eb', 'x'.repeat(501)]) {
+      await ui.input({ key: GO, text, kind: 'change' })
+      await ui.press({ key: `${GO}:run` })
+      expect((await ui.find({ key: GO })).type).toBe('Input')
+      expect(await ui.find({ text: /input (holds|is longer)/ })).toBeDefined()
+    }
+    expect(seen).toEqual([])
+  })
+
+  test('a built-in needs the second press, on run', async ($, on) => {
+    const { seen, run } = calls()
+    const clock = mock.clock(on)
+    toastsOf(on)
+    stub(on, { ...ASKING, run })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: 'cmd:alpha:clear:' })
+    expect(seen).toEqual([])
+    expect(await ui.find({ text: /\/clear …/ })).toBeDefined()
+    await ui.press({ key: 'cmd:alpha:clear::run' })
+    expect(seen).toEqual([])
+    expect((await ui.find({ key: 'cmd:alpha:clear:' })).type).toBe('Input')
+    await ui.press({ key: 'cmd:alpha:clear::run' })
+    await clock.settle()
+    expect(seen).toMatchObject([{ command: 'clear', args: 'x' }])
+  })
+
+  test('a band favourite opens the pane with the editor open', async ($, on) => {
+    const opened: unknown[] = []
+    const { seen, run } = calls()
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'go --all' }]]])
+    toastsOf(on)
+    stub(on, { ...ASKING, run, store, open: e => opened.push(e) })
+    emptyBase(on)
+    await start($)
+    const band = await mountBand($)
+    await band.press({ key: 'band:1' })
+    expect(opened).toMatchObject([{ id: 'quick-menu', focus: true }])
+    expect(seen).toEqual([])
+    const ui = await mountPane($, { expand: false })
+    const input = await ui.find({ key: `fav:${GO}` })
+    expect(input.type).toBe('Input')
+    expect(input.props.value).toBe('develop')
+    await ui.input({ key: `fav:${GO}`, text: 'z', kind: 'change' })
+    await ui.press({ key: `fav:${GO}:run` })
+    expect(seen).toMatchObject([{ command: 'go', args: '--all z' }])
+  })
+})
+
 describe('security: menu file input', () => {
   const bad = (o: unknown) => validateMenuFile({ version: 1, ...(o as object) })
 
