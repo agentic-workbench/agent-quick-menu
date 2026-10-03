@@ -44,12 +44,16 @@ export type RowState = {
   notes: Record<string, { kind: 'deny' | 'error'; text: string }>
 }
 
+/** A pinned command (key: command plus args) or setting (key: config key) of the plugin. */
+export type Favourite = { kind: 'command' | 'setting'; plugin: string; key: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'agent-quick-menu': {
       sections: MenuSection[]
       problems: MenuProblem[]
       rowState: RowState
+      favourites: Favourite[]
     }
   }
 }

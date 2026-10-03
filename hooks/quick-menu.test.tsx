@@ -23,6 +23,8 @@ type World = {
   rows?: Record<string, unknown>[]
   run?: (e: { command: string; args?: string }) => unknown
   set?: (e: { key: string; value: unknown }) => unknown
+  open?: (e: unknown) => void
+  store?: Map<string, unknown>
 }
 
 function stub(on: any, w: World) {
@@ -33,7 +35,13 @@ function stub(on: any, w: World) {
   const env = (): Record<string, string> => ({ HOME, ...w.env })
   on('session.start', () => ({ cwd: '/tmp' }))
   on('command.register', () => ({ value: undefined }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_$: unknown, e: unknown) => (w.open?.(e), { value: { isPlaced: true } }))
+  const store = w.store ?? new Map<string, unknown>()
+  on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
+  on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
+    store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    return { value: undefined }
+  })
   on('settings.read', () => ({ value: { enabledPlugins: w.enabled ?? {} } }))
   on('env.get', (_$: unknown, e: { name: string }) => ({ value: env()[e.name] }))
   on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() }))
@@ -78,6 +86,9 @@ const row = (key: string, extra: Record<string, unknown> = {}) => ({
   isLocked: false,
   ...extra,
 })
+
+const realButtons = async (ui: any) =>
+  (await ui.findAll({ type: 'Button' })).filter((b: any) => !String(b.key).includes('star:'))
 
 const file = (o: unknown) => JSON.stringify(o)
 
@@ -130,7 +141,7 @@ describe('discovery', () => {
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await ui.find({ text: /Gone \(not available\)/ })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
+    expect(await realButtons(ui)).toHaveLength(1)
     expect(await ui.find({ text: /off/ })).toBeUndefined()
   })
 
@@ -242,7 +253,7 @@ describe('commands', () => {
     stub(on, { ...ALPHA, files: alphaFile({ version: 1, commands: [{ command: 'gone' }] }), commands: [] })
     await start($)
     const ui = await paneText($)
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect(await realButtons(ui)).toHaveLength(0)
     expect(await ui.find({ text: /gone \(not available\)/ })).toBeDefined()
   })
 })
@@ -306,7 +317,7 @@ describe('settings', () => {
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /managed/ })).toBeDefined()
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect(await realButtons(ui)).toHaveLength(0)
   })
 
   test('settings follow the file list order and skip unlisted rows', async ($, on) => {
@@ -346,5 +357,159 @@ describe('sections', () => {
       .filter(t => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
     expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
+  })
+})
+
+const BAND_PROPS = {
+  hasSurvey: false,
+  isWorking: false,
+  maxRows: 3,
+  bodyColumns: 100,
+  scroll: { offset: 0, max: 0 },
+  view: { rows: 24, columns: 100 },
+} as never
+
+async function mountBand($: any, props: unknown = BAND_PROPS, surface = 'terminal') {
+  return $.ui.mount({ plugin: 'agent-quick-menu', surface, component: 'AbovePrompt', props })
+}
+
+const FAV_WORLD = (extra: Partial<World> = {}): World => ({
+  ...ALPHA,
+  files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', args: '--all' }, { command: 'stop' }] }),
+  commands: ['go', 'stop'],
+  rows: [row('alpha.flag', { kind: 'boolean', value: false }), row('alpha.name', { value: 'x' })],
+  ...extra,
+})
+
+const textsOf = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((x: any) => x.text as string)
+
+describe('favourites', () => {
+  test('pinning and unpinning writes through $.store and survives a fresh session.start', async ($, on) => {
+    const store = new Map<string, unknown>()
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'star:cmd:alpha:go:--all' })
+    await ui.press({ key: 'star:set:alpha.flag' })
+    const pinned = [
+      { kind: 'command', plugin: 'alpha', key: 'go --all' },
+      { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
+    ]
+    expect(store.get('favourites')).toEqual(pinned)
+    await start($)
+    expect(store.get('favourites')).toEqual(pinned)
+    expect(await ui.find({ key: 'fav:cmd:alpha:go:--all' })).toBeDefined()
+    await ui.press({ key: 'fav:star:cmd:alpha:go:--all' })
+    expect(store.get('favourites')).toEqual([pinned[1]])
+  })
+
+  test('the Favourites section comes first and keeps pin order', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [
+      { kind: 'setting', plugin: 'alpha', key: 'alpha.name' },
+      { kind: 'command', plugin: 'alpha', key: 'stop' },
+    ]]])
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await paneText($)
+    const texts = await textsOf(ui)
+    expect(texts.indexOf('Favourites')).toBe(0)
+    const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter(k => k?.startsWith('fav:') && !k.includes('star'))
+    expect(keys).toEqual(['fav:set:alpha.name', 'fav:cmd:alpha:stop:'])
+  })
+
+  test('a favourite whose source is gone shows "gone" and can only be removed', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'vanished' }]]])
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /vanished \(gone\)/ })).toBeDefined()
+    const pinned = (await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fav:'))
+    expect(pinned.map((b: any) => b.text)).toEqual(['★'])
+    await ui.press({ key: pinned[0].key })
+    expect(store.get('favourites')).toEqual([])
+    expect(await ui.find({ text: /gone/ })).toBeUndefined()
+  })
+})
+
+const emptyBase = (on: any) =>
+  on('ui.render', ($: any, e: any) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+describe('band', () => {
+  const pin = () => [
+    { kind: 'command', plugin: 'alpha', key: 'go --all' },
+    { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
+  ]
+
+  test('shows the menu button and favourites in order with digit hotkeys', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', pin()]])
+    stub(on, FAV_WORLD({ store }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    const buttons = await ui.findAll({ type: 'Button' })
+    expect(buttons.map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
+      ['☰ menu', 'm'],
+      ['Go', '1'],
+      ['flag: off', '2'],
+    ])
+  })
+
+  test('a command favourite runs through $.command.run', async ($, on) => {
+    const calls: unknown[] = []
+    const store = new Map<string, unknown>([['favourites', pin()]])
+    stub(on, FAV_WORLD({ store, run: e => (calls.push(e), { text: 'ok' }) }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    await ui.press({ key: 'band:1' })
+    expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
+  })
+
+  test('a boolean favourite toggles via $.config.set', async ($, on) => {
+    const sets: unknown[] = []
+    const store = new Map<string, unknown>([['favourites', pin()]])
+    stub(on, FAV_WORLD({ store, set: e => (sets.push(e), { value: e.value }) }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    await ui.press({ key: 'band:2' })
+    expect(sets).toMatchObject([{ key: 'alpha.flag', value: true }])
+  })
+
+  test('the menu button opens the pane', async ($, on) => {
+    const opened: unknown[] = []
+    stub(on, FAV_WORLD({ open: e => opened.push(e) }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    await ui.press({ key: 'band:menu' })
+    expect(opened).toMatchObject([{ id: 'quick-menu', focus: true }])
+  })
+
+  test("the band keeps next(e)'s tree", async ($, on) => {
+    stub(on, FAV_WORLD())
+    on('ui.render', ($: any, e: any) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>cache 4:00</Text>
+    })
+    await start($)
+    const ui = await mountBand($)
+    expect(await ui.find({ text: /cache 4:00/ })).toBeDefined()
+    expect(await ui.find({ key: 'band:menu' })).toBeDefined()
+  })
+
+  test('a survey leaves only next(e)', async ($, on) => {
+    stub(on, FAV_WORLD())
+    on('ui.render', ($: any, e: any) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>survey</Text>
+    })
+    await start($)
+    const ui = await mountBand($, { ...(BAND_PROPS as object), hasSurvey: true })
+    expect(await ui.find({ text: /survey/ })).toBeDefined()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
   })
 })

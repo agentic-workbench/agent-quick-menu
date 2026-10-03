@@ -1,13 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { ConfigRow, ConfigValue, EngineInterface, Register } from 'claude-code'
 
-import type { MenuCommand, MenuFile, MenuProblem, MenuSection, SectionCommand } from '../types'
+import type { Favourite, MenuCommand, MenuFile, MenuProblem, MenuSection, SectionCommand } from '../types'
 
 export const PANE_ID = 'quick-menu'
 const MENU_FILE = '.claude-plugin/quick-menu.json'
 
 const sections = atom({ plugin: 'agent-quick-menu', key: 'sections' } as const, [] as MenuSection[])
 const problems = atom({ plugin: 'agent-quick-menu', key: 'problems' } as const, [] as MenuProblem[])
+
+const favourites = atom({ plugin: 'agent-quick-menu', key: 'favourites' } as const, [] as Favourite[])
 
 type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 
@@ -191,7 +193,7 @@ async function openMenu($: EngineInterface, args: string): Promise<{ text: strin
     const [s, p] = [await read($, sections), await read($, problems)]
     return { text: `Quick menu refreshed: ${s.length} sections, ${p.length} problems` }
   }
-  await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100 })
+  await openPane($)
   return { text: 'Quick menu opened' }
 }
 
@@ -266,10 +268,67 @@ async function submitNumber($: EngineInterface, row: ConfigRow, raw: string): Pr
 
 type Ui = ReturnType<EngineInterface['ui']['resolve']>
 
-function renderSetting($: EngineInterface, ui: Ui, row: ConfigRow, notes: Record<string, Note>) {
+const favCommandKey = (c: SectionCommand): string => (c.args ? `${c.command} ${c.args}` : c.command)
+const sameFav = (a: Favourite, b: Favourite): boolean =>
+  a.kind === b.kind && a.plugin === b.plugin && a.key === b.key
+
+function isFavourite(list: readonly Favourite[], f: Favourite): boolean {
+  return list.some(x => sameFav(x, f))
+}
+
+function isFavourites(v: unknown): v is Favourite[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      x =>
+        isObject(x) &&
+        (x.kind === 'command' || x.kind === 'setting') &&
+        typeof x.plugin === 'string' &&
+        typeof x.key === 'string',
+    )
+  )
+}
+
+async function loadFavourites($: EngineInterface): Promise<void> {
+  let stored: unknown
+  try {
+    stored = await $.store.get('favourites')
+  } catch {
+    stored = undefined
+  }
+  await update($, favourites, () => (isFavourites(stored) ? stored : []))
+}
+
+async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> {
+  await update($, favourites, list => (isFavourite(list, f) ? list.filter(x => !sameFav(x, f)) : [...list, f]))
+  await $.store.set('favourites', await read($, favourites))
+  $.ui.invalidate('ui.render')
+}
+
+type FavCtx = { list: readonly Favourite[]; prefix: string }
+
+function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
+  const { Button } = ui
+  return (
+    <Button
+      key={`${fav.prefix}star:${id}`}
+      label={isFavourite(fav.list, f) ? '★' : '☆'}
+      onPress={() => void toggleFavourite($, f)}
+    />
+  )
+}
+
+function renderSetting(
+  $: EngineInterface,
+  ui: Ui,
+  row: ConfigRow,
+  plugin: string,
+  notes: Record<string, Note>,
+  fav: FavCtx,
+) {
   const { Box, Text, Button, Select, Input } = ui
-  const id = settingKey(row.key)
-  const note = notes[id]
+  const id = fav.prefix + settingKey(row.key)
+  const note = notes[settingKey(row.key)]
   const shown = Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
   let control
   if (row.isLocked) {
@@ -304,23 +363,33 @@ function renderSetting($: EngineInterface, ui: Ui, row: ConfigRow, notes: Record
   }
   return (
     <Box key={`row:${id}`} flexDirection="row">
+      {renderStar($, ui, { kind: 'setting', plugin, key: row.key }, settingKey(row.key), fav)}
       {control}
       {note && <Text color="red">{`  ${note.text}`}</Text>}
     </Box>
   )
 }
 
-function renderCommand($: EngineInterface, ui: Ui, plugin: string, c: SectionCommand, state: RowState) {
+function renderCommand(
+  $: EngineInterface,
+  ui: Ui,
+  plugin: string,
+  c: SectionCommand,
+  state: RowState,
+  fav: FavCtx,
+) {
   const { Box, Text, Button } = ui
-  const id = commandKey(plugin, c)
+  const rid = commandKey(plugin, c)
+  const id = fav.prefix + rid
   return (
     <Box key={`row:${id}`} flexDirection="row">
+      {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
       {c.isAvailable ? (
         <Button key={id} label={c.label} onPress={() => void runCommand($, plugin, c)} />
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
-      {state.queued[id] && <Text dimColor>  queued</Text>}
+      {state.queued[rid] && <Text dimColor>  queued</Text>}
       {c.description && <Text dimColor>{`  ${c.description}`}</Text>}
     </Box>
   )
@@ -337,6 +406,35 @@ function settingRows(section: MenuSection, rows: readonly ConfigRow[]): ConfigRo
   return out
 }
 
+function findFavCommand(f: Favourite, found: readonly MenuSection[]): SectionCommand | undefined {
+  return found.find(x => x.plugin === f.plugin)?.commands.find(c => favCommandKey(c) === f.key)
+}
+
+function renderFavourite(
+  $: EngineInterface,
+  ui: Ui,
+  f: Favourite,
+  found: readonly MenuSection[],
+  rows: readonly ConfigRow[],
+  state: RowState,
+  fav: FavCtx,
+) {
+  if (f.kind === 'command') {
+    const c = findFavCommand(f, found)
+    if (c) return renderCommand($, ui, f.plugin, c, state, fav)
+  } else {
+    const r = rows.find(x => x.key === f.key)
+    if (r) return renderSetting($, ui, r, f.plugin, state.notes, fav)
+  }
+  const { Box, Text } = ui
+  return (
+    <Box key={`row:${fav.prefix}gone:${f.kind}:${f.plugin}:${f.key}`} flexDirection="row">
+      {renderStar($, ui, f, `${f.kind}:${f.plugin}:${f.key}`, fav)}
+      <Text dimColor>{`${f.key} (gone)`}</Text>
+    </Box>
+  )
+}
+
 async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
   const ui = $.ui.resolve(e)
   const { Box, Text } = ui
@@ -348,26 +446,104 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
     rows = []
   }
   const engineRows = rows.filter(r => r.provider.plugin === 'engine')
+  const favs = await read($, favourites)
+  const own: FavCtx = { list: favs, prefix: '' }
+  const pinned: FavCtx = { list: favs, prefix: 'fav:' }
   return (
     <Box flexDirection="column">
+      {favs.length > 0 && (
+        <Box key="favourites" flexDirection="column">
+          <Text bold>Favourites</Text>
+          {favs.map(f => renderFavourite($, ui, f, s, rows, state, pinned))}
+        </Box>
+      )}
       {s.length === 0 && engineRows.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
       {s.map(section => (
         <Box key={section.plugin} flexDirection="column">
           <Text bold>{section.title}</Text>
-          {section.commands.map(c => renderCommand($, ui, section.plugin, c, state))}
-          {settingRows(section, rows).map(r => renderSetting($, ui, r, state.notes))}
+          {section.commands.map(c => renderCommand($, ui, section.plugin, c, state, own))}
+          {settingRows(section, rows).map(r => renderSetting($, ui, r, section.plugin, state.notes, own))}
         </Box>
       ))}
       {engineRows.length > 0 && (
         <Box key="claude-code" flexDirection="column">
           <Text bold>Claude Code</Text>
-          {engineRows.map(r => renderSetting($, ui, r, state.notes))}
+          {engineRows.map(r => renderSetting($, ui, r, 'engine', state.notes, own))}
         </Box>
       )}
       {p.length > 0 && <Text bold>Problems</Text>}
       {p.map((x, i) => (
         <Text key={i} color="red">{`  ${x.plugin}: ${x.message}`}</Text>
       ))}
+    </Box>
+  )
+}
+
+type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
+  props: { hasSurvey: boolean; bodyColumns: number }
+}
+
+type BandItem = { label: string; onPress: () => void }
+
+function bandItem(
+  $: EngineInterface,
+  f: Favourite,
+  found: readonly MenuSection[],
+  rows: readonly ConfigRow[],
+): BandItem | null {
+  if (f.kind === 'command') {
+    const c = findFavCommand(f, found)
+    if (!c || !c.isAvailable) return null
+    return { label: c.label, onPress: () => void runCommand($, f.plugin, c) }
+  }
+  const r = rows.find(x => x.key === f.key)
+  if (!r) return null
+  if (r.kind === 'boolean' && !r.isLocked) {
+    return { label: `${r.label}: ${r.value ? 'on' : 'off'}`, onPress: () => void writeSetting($, r, !r.value) }
+  }
+  return { label: r.label, onPress: () => void openPane($) }
+}
+
+async function openPane($: EngineInterface): Promise<void> {
+  await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100 })
+}
+
+async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown) {
+  if (e.props.hasSurvey) return next()
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') return next()
+  const { Box, Button } = $.ui.resolve(e)
+  const [favs, found] = [await read($, favourites), await read($, sections)]
+  let rows: ConfigRow[] = []
+  try {
+    rows = await $.config.list()
+  } catch {
+    rows = []
+  }
+  const menuLabel = '☰ menu'
+  let used = menuLabel.length + 2
+  const items: BandItem[] = []
+  for (const f of favs) {
+    const item = bandItem($, f, found, rows)
+    if (!item) continue
+    used += item.label.length + 3
+    if (used > e.props.bodyColumns) break
+    items.push(item)
+  }
+  const below = await next()
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void openPane($)} />
+        {items.map((item, i) => (
+          <Button
+            key={`band:${i + 1}`}
+            label={item.label}
+            {...(i < 9 && { hotkey: String(i + 1) })}
+            onPress={item.onPress}
+          />
+        ))}
+      </Box>
+      {below !== undefined && below !== null && below}
     </Box>
   )
 }
@@ -380,10 +556,13 @@ export const register: Register = on => {
       argumentHint: '[refresh]',
     })
     await runDiscovery($)
+    await loadFavourites($)
     return next(e)
   })
 
   on('command.run', { command: 'menu' }, ($, e) => openMenu($, e.args ?? ''))
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, ($, e) => renderMenu($, e))
+
+  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, () => next(e)))
 }
