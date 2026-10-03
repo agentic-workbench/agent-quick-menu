@@ -128,6 +128,14 @@ const realButtons = async (ui: any) =>
 
 const file = (o: unknown) => JSON.stringify(o)
 
+/** The menu's own quick-menu.json. */
+const SELF_FILE = file({
+  version: 1,
+  title: 'Quick menu',
+  commands: [{ command: 'menu', label: 'Refresh', args: 'refresh' }],
+  settings: [],
+})
+
 describe('validateMenuFile', () => {
   test('accepts a full file and defaults', () => {
     const r = validateMenuFile({
@@ -419,6 +427,7 @@ describe('settings', () => {
     await start($)
     const ui = await paneText($)
     await ui.press({ key: 'set:alpha.flag' })
+    await ui.press({ key: 'set:alpha.mode' })
     await ui.select({ key: 'set:alpha.mode', value: 'b' })
     await ui.input({ key: 'set:alpha.name', text: 'hello' })
     await ui.input({ key: 'set:alpha.count', text: '42' })
@@ -428,6 +437,41 @@ describe('settings', () => {
       { key: 'alpha.name', value: 'hello' },
       { key: 'alpha.count', value: 42 },
     ])
+  })
+
+  test('a choice row is folded to `value ▾`; a press opens the picker in its place and a pick folds it again', async ($, on) => {
+    const sets: unknown[] = []
+    const world = setup(
+      [
+        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b', 'c', 'd'] }),
+        row('alpha.other', { kind: 'choice', value: 'x', options: ['x', 'y'] }),
+      ],
+      { set: e => (sets.push(e), { value: e.value }) },
+    )
+    stub(on, world)
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    const folded = await ui.find({ key: 'set:alpha.mode' })
+    expect([folded.type, folded.props.label]).toEqual(['Button', 'a ▾'])
+    await ui.press({ key: 'set:alpha.mode' })
+    const open = await ui.findAll({ type: 'Select' })
+    expect(open.map((x: any) => [x.key, x.props.value, x.props.options.map((o: any) => o.value)])).toEqual([
+      ['set:alpha.mode', 'a', ['a', 'b', 'c', 'd']],
+    ])
+    expect((await ui.find({ key: 'set:alpha.other' })).type).toBe('Button')
+    // Opening another row folds the first: one picker at a time.
+    await ui.press({ key: 'set:alpha.other' })
+    expect((await ui.findAll({ type: 'Select' })).map((x: any) => x.key)).toEqual(['set:alpha.other'])
+    await ui.press({ key: 'set:alpha.mode' })
+    world.rows = [
+      row('alpha.mode', { kind: 'choice', value: 'c', options: ['a', 'b', 'c', 'd'] }),
+      row('alpha.other', { kind: 'choice', value: 'x', options: ['x', 'y'] }),
+    ]
+    await ui.select({ key: 'set:alpha.mode', value: 'c' })
+    expect(sets).toMatchObject([{ key: 'alpha.mode', value: 'c' }])
+    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('c ▾')
   })
 
   test('on mobile, without Select and Input, choice, text and number rows are read-only text', async ($, on) => {
@@ -616,7 +660,7 @@ describe('band', () => {
     const ui = await mountBand($)
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
-      ['☰ menu', 'm'],
+      ['≣ menu', 'm'],
       ['Go', '1'],
       ['flag: off', undefined],
     ])
@@ -658,9 +702,9 @@ describe('band', () => {
       (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).map(
         (b: any) => b.props.label,
       )
-    expect(await labels(33)).toEqual(['☰ menu', 'Go', 'stop'])
-    expect(await labels(32)).toEqual(['☰ menu', 'Go'])
-    expect(await labels(23)).toEqual(['☰ menu'])
+    expect(await labels(33)).toEqual(['≣ menu', 'Go', 'stop'])
+    expect(await labels(32)).toEqual(['≣ menu', 'Go'])
+    expect(await labels(23)).toEqual(['≣ menu'])
   })
 
   test('only command favourites get digit hotkeys', async ($, on) => {
@@ -696,6 +740,40 @@ describe('band', () => {
     const ui = await mountBand($)
     expect(await ui.find({ text: /cache 4:00/ })).toBeDefined()
     expect(await ui.find({ key: 'band:menu' })).toBeDefined()
+  })
+
+  test('with no favourites the band row holds the menu button alone, its label one cell per character', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toEqual(['≣ menu'])
+    expect(await textsOf(ui)).toEqual([])
+    // No East Asian Wide glyph (☰ U+2630 is one): the engine and a terminal on older Unicode tables disagree on its width.
+    expect([...'≣ menu'].every(ch => !/[\u1100-\u115f\u2630-\u2637\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60]/.test(ch))).toBe(true)
+  })
+
+  test('a favourite naming /menu refresh is answered by the menu itself, not queued through $.command.run', async ($, on) => {
+    const runs: { command: string }[] = []
+    const toasts: string[] = []
+    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'agent-quick-menu', key: 'menu refresh' }]]])
+    stub(on, {
+      registry: {},
+      self: SELF_FILE,
+      store,
+      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
+      run: e => (runs.push(e), { text: 'agent-quick-menu registered /menu but no command.run hook answered it' }),
+    })
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    expect((await ui.find({ key: 'band:1' })).props.label).toBe('Refresh')
+    await ui.press({ key: 'band:1' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(runs.filter(r => r.command === 'menu')).toHaveLength(0)
+    expect(toasts.join('\n')).not.toMatch(/no command\.run hook answered/)
+    expect(toasts.at(-1)).toMatch(/Quick menu refreshed/)
   })
 
   test('a survey leaves only next(e)', async ($, on) => {
@@ -911,7 +989,8 @@ describe('live feedback round 1', () => {
     expect(flag.type).toBe('Button')
     expect(flag.props.label).toBe('on')
     expect(await ui.find({ text: /^flag\s+$/ })).toBeDefined()
-    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toMatch(/^mode\s+$/)
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+    expect(await ui.find({ text: /^mode\s+$/ })).toBeDefined()
     expect(await ui.find({ text: /fixed\s+false\s+managed/ })).toBeDefined()
   })
 
@@ -972,13 +1051,6 @@ describe('live feedback round 1', () => {
     expect(tags).toHaveLength(1)
     expect(tags[0].props.dimColor).toBe(true)
   })
-})
-
-const SELF_FILE = file({
-  version: 1,
-  title: 'Quick menu',
-  commands: [{ command: 'menu', label: 'Refresh', args: 'refresh' }],
-  settings: [],
 })
 
 describe('live feedback round 2', () => {

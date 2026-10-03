@@ -25,7 +25,7 @@ Then run `/reload-plugins` in a running session.
 ## Usage
 
 - `/menu` opens the pane. `/menu refresh` discovers plugin menus again.
-- The band above the prompt is one line: `☰ menu │ 1 Pull  2 Status …` (hotkey `m` while the band is focused, then your favourites).
+- The band above the prompt is one line: `≣ menu │ 1 Pull  2 Status …` (hotkey `m` while the band is focused, then your favourites).
 - `ctrl+x tab` focuses the band.
 - With an empty prompt, the digits `1` to `9` press the command favourites in order. Setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.

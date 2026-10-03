@@ -14,6 +14,7 @@ const favourites = atom({ plugin: 'agent-quick-menu', key: 'favourites' } as con
 const folded = atom({ plugin: 'agent-quick-menu', key: 'folded' } as const, {} as Record<string, boolean>)
 const unplaced = atom({ plugin: 'agent-quick-menu', key: 'unplaced' } as const, false)
 const filter = atom({ plugin: 'agent-quick-menu', key: 'filter' } as const, '')
+const openChoice = atom({ plugin: 'agent-quick-menu', key: 'openChoice' } as const, '')
 
 type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 
@@ -356,6 +357,17 @@ async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigVal
   $.ui.invalidate('ui.render')
 }
 
+async function setOpenChoice($: EngineInterface, id: string): Promise<void> {
+  await update($, openChoice, () => id)
+  $.ui.invalidate('ui.render')
+}
+
+/** A pick in an open choice row: folds the row back to `value ▾`, then writes the value. */
+async function pickChoice($: EngineInterface, row: ConfigRow, value: string): Promise<void> {
+  await setOpenChoice($, '')
+  await writeSetting($, row, value)
+}
+
 async function submitNumber($: EngineInterface, row: ConfigRow, raw: string): Promise<void> {
   const n = Number(raw)
   if (raw.trim() === '' || !Number.isFinite(n)) {
@@ -412,7 +424,7 @@ async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> 
 }
 
 /** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label. */
-type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number }
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; openChoice: string }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
@@ -455,15 +467,25 @@ function renderSetting(
       </Box>
     )
   } else if (row.kind === 'choice' && row.options && row.options.length > 0 && Select && fav.hasFields) {
-    control = (
-      <Select
-        key={id}
-        label={`${label}  `}
-        options={row.options.map(value => ({ value }))}
-        value={shown}
-        onSelect={(value: string) => void writeSetting($, row, value)}
-      />
-    )
+    // Folded to `value ▾` until pressed; the picker then takes the same key, so the focus ring stays on it, and a pick
+    // folds it again. A Select draws its option list whenever it holds the focus, so a row of them would unfold one by
+    // one as the ring passes.
+    control =
+      fav.openChoice === id ? (
+        <Select
+          key={id}
+          label={`${label}  `}
+          options={row.options.map(value => ({ value }))}
+          value={shown}
+          autoFocus
+          onSelect={(value: string) => void pickChoice($, row, value)}
+        />
+      ) : (
+        <Box key={`choice:${id}`} flexDirection="row">
+          <Text>{`${label}  `}</Text>
+          <Button key={id} label={`${shown} ▾`} plain onPress={() => void setOpenChoice($, id)} />
+        </Box>
+      )
   } else if (Input && fav.hasFields) {
     control = (
       <Input
@@ -585,6 +607,7 @@ type MenuData = {
   favs: Favourite[]
   folded: Record<string, boolean>
   filter: string
+  openChoice: string
   blocks: Block[]
 }
 
@@ -627,12 +650,13 @@ const foldAll = ($: EngineInterface, ids: readonly string[], isFold: boolean): P
   writeFolds($, stored => ({ ...stored, ...Object.fromEntries(ids.map(id => [id, isFold])) }))
 
 async function loadMenu($: EngineInterface): Promise<MenuData> {
-  const [s, state, favs, folds, needle] = [
+  const [s, state, favs, folds, needle, open] = [
     await read($, sections),
     await read($, rowState),
     await read($, favourites),
     await read($, folded),
     (await read($, filter)).trim().toLowerCase(),
+    await read($, openChoice),
   ]
   let rows: ConfigRow[] = []
   try {
@@ -676,7 +700,7 @@ async function loadMenu($: EngineInterface): Promise<MenuData> {
   }
   const engineRows = rows.filter(r => r.provider.plugin === 'engine')
   if (engineRows.length > 0) push({ id: ENGINE_ID, plugin: 'engine', title: 'Claude Code', commands: [], rows: engineRows })
-  return { all, rows, state, favs, folded: folds, filter: needle, blocks }
+  return { all, rows, state, favs, folded: folds, filter: needle, openChoice: open, blocks }
 }
 
 /** Open when the map says so; every block with a match is open while a filter is set. */
@@ -704,7 +728,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
     ? b.favs.flatMap(f => (f.kind === 'setting' ? d.rows.filter(r => r.key === f.key) : []))
     : b.rows
   const widest = Math.max(0, ...labelRows.map(r => width(r.label)))
-  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest })
+  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, openChoice: d.openChoice })
   let body: RenderNode[] | null = null
   if (!showBody) {
     body = null
@@ -798,6 +822,9 @@ type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
   props: { hasSurvey: boolean; bodyColumns: number; maxRows: number }
 }
 
+/** The band's menu button. */
+export const MENU_LABEL = '≣ menu'
+
 type BandItem = { label: string; onPress: () => void; isCommand: boolean; digit?: number }
 
 /** Display width of a label in cells: code points, not UTF-16 units. */
@@ -865,7 +892,9 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
   const { Box, Button, Text } = $.ui.resolve(e)
   const d = await loadMenu($)
-  const menuLabel = '☰ menu'
+  // A glyph every width table agrees is one cell: ☰ (U+2630) is wide to the engine and narrow to a terminal on older
+  // Unicode tables, so the row drifts by a cell and the redraw after a band change leaves a stale cell behind.
+  const menuLabel = MENU_LABEL
   // The menu button takes its label plus 5 cells, the divider 2, a plain button its label, 3 for a digit and 2 apart; 4 stay free for the engine's `[-]`.
   let used = width(menuLabel) + 5 + 2 + 4
   const items: BandItem[] = []
@@ -915,6 +944,7 @@ export const register: Register = on => {
     await update($, rowState, () => ({ queued: {}, notes: {} }))
     await update($, unplaced, () => false)
     await update($, filter, () => '')
+    await update($, openChoice, () => '')
     await loadFavourites($)
     await loadFolds($)
     await $.command.register({

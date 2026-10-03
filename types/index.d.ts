@@ -63,6 +63,8 @@ declare module 'claude-code' {
       filter: string
       /** `--plugin-dir` plugin name to root, from `plugin.register`, kept across a reload of this module. */
       inlineRoots: Record<string, string>
+      /** The element key of the one choice row whose picker is open; '' when all are folded to `value ▾`. */
+      openChoice: string
     }
   }
 }
