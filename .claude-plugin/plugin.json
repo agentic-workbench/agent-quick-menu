@@ -1,7 +1,6 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agent-quick-menu",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.",
   "author": {
     "name": "dasganni",
@@ -10,7 +9,6 @@
   "homepage": "https://github.com/agentic-workbench/agent-quick-menu",
   "repository": "https://github.com/agentic-workbench/agent-quick-menu",
   "license": "MIT",
-  "icon": "./.claude-plugin/icon.png",
   "userConfig": {
     "bandHotkeys": {
       "type": "boolean",

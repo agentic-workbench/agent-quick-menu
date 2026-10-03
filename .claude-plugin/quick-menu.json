@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
   "commands": [
     {
