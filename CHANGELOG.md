@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-03
+
+### Removed
+
+- The `buttonStyle` setting and its pill/box looks; buttons keep the bracket style. The plugin directory does not accept `options` in userConfig yet.
+
 ## [0.1.10] - 2026-10-03
 
 ### Fixed
@@ -101,7 +107,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.7...v0.1.8
