@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-03
+
 ### Changed
 
 - Commands are listed one per line, aligned like the settings table: star, button, the dim `/command args` hint, then the dim description clipped to the width. The foreign/built-in tag, the confirm-twice label and the "+k more" cap stay.
@@ -78,7 +80,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...v0.1.5
