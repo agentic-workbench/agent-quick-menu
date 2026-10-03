@@ -45,11 +45,13 @@ export type MenuSection = {
 /** A plugin whose menu file or registry entry could not be used. */
 export type MenuProblem = { plugin: string; message: string }
 
+/** A row's note. `shown`: the row's value (as `/config key=value` spells it) when the note was made; the note is drawn only while the row still shows it. */
+export type Note = { kind: 'deny' | 'error'; text: string; shown: string }
+
 /** Transient per-row pane state: commands waiting on `$.command.run`, and the deny or error beside a row. */
 export type RowState = {
   queued: Record<string, true>
-  /** `shown`: the row's value (as `/config key=value` spells it) when the note was made; the note is drawn only while the row still shows it. */
-  notes: Record<string, { kind: 'deny' | 'error'; text: string; shown: string }>
+  notes: Record<string, Note>
   /** The command whose button was pressed once and waits for the confirming press until `until` (`$.clock.now()` ms). */
   armed: { id: string; until: number }
 }
@@ -69,8 +71,10 @@ declare module 'claude-code' {
       filter: string
       /** `--plugin-dir` plugin name to root, from `plugin.register`, kept across a reload of this module. */
       inlineRoots: Record<string, string>
-      /** The element key of the one choice row whose picker is open; '' when all are folded to `value ▾`. */
-      openChoice: string
+      /** The element key of the one choice or text row being edited; '' when all are folded to `value ▾` / `value ✎`. */
+      openEditor: string
+      /** The text in the open text editor, as last typed. */
+      editDraft: string
     }
   }
 }

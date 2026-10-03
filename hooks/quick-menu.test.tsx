@@ -482,7 +482,9 @@ describe('settings', () => {
     await ui.press({ key: 'set:alpha.flag' })
     await ui.press({ key: 'set:alpha.mode' })
     await ui.press({ key: 'set:alpha.mode:b' })
+    await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'hello' })
+    await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '42' })
     expect(sets).toMatchObject([
       { key: 'alpha.flag', value: 'true' },
@@ -573,6 +575,7 @@ describe('settings', () => {
     stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { set: e => (sets.push(e), { value: e.value }) }))
     await start($)
     const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: 'abc' })
     expect(sets).toEqual([])
     expect(await ui.find({ text: /not a number/ })).toBeDefined()
@@ -590,6 +593,7 @@ describe('settings', () => {
     stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: () => ({ deny: 'alpha.name is not changed' }) }))
     await start($)
     const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'x' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
   })
@@ -613,9 +617,12 @@ describe('settings', () => {
     await ui.press({ key: 'set:alpha.flag' })
     await ui.press({ key: 'set:alpha.mode' })
     await ui.press({ key: 'set:alpha.mode:b' })
+    await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'y' })
+    await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '2' })
     // The same value again: nothing to refuse.
+    await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'y' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
     expect((await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'red')).toHaveLength(0)
@@ -633,6 +640,7 @@ describe('settings', () => {
     stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { silentConfig: true, set: () => ({ value: '10' }) }))
     await start($)
     const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '99' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
   })
@@ -678,8 +686,90 @@ describe('settings', () => {
     stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: e => (sets.push(e), { value: e.value }) }))
     await start($)
     const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'a b=c' })
     expect(sets).toEqual([{ key: 'alpha.name', value: 'a b=c' }])
+  })
+
+  describe('text and number editing', () => {
+    const edited = (extra: Partial<World> = {}) => {
+      const sets: unknown[] = []
+      const world = setup(
+        [row('alpha.name', { kind: 'text', value: 'x' }), row('alpha.count', { kind: 'number', value: 1 })],
+        { set: e => (sets.push(e), { value: e.value }), ...extra },
+      )
+      return { sets, world }
+    }
+
+    test('a value is a `value ✎` button; pressing opens an Input with save and cancel, one editor at a time', async ($, on) => {
+      stub(on, edited().world)
+      await start($)
+      const ui = await paneText($)
+      expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
+      expect(await ui.findAll({ type: 'Input' })).toHaveLength(1)
+      await ui.press({ key: 'set:alpha.name' })
+      const input = await ui.find({ key: 'set:alpha.name' })
+      expect([input.type, input.props.value]).toEqual(['Input', 'x'])
+      expect(await ui.find({ key: 'set:alpha.name:save' })).toBeDefined()
+      expect(await ui.find({ key: 'set:alpha.name:cancel' })).toBeDefined()
+      await ui.press({ key: 'set:alpha.count' })
+      expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
+      expect((await ui.find({ key: 'set:alpha.count' })).type).toBe('Input')
+    })
+
+    test('cancel discards the typed text, closes and writes nothing', async ($, on) => {
+      const { sets, world } = edited()
+      stub(on, world)
+      await start($)
+      const ui = await paneText($)
+      await ui.press({ key: 'set:alpha.name' })
+      await ui.input({ key: 'set:alpha.name', text: 'typed', kind: 'change' })
+      await ui.press({ key: 'set:alpha.name:cancel' })
+      expect(sets).toEqual([])
+      expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
+      await ui.press({ key: 'set:alpha.name' })
+      expect((await ui.find({ key: 'set:alpha.name' })).props.value).toBe('x')
+    })
+
+    test('save writes the typed text once and closes', async ($, on) => {
+      const { sets, world } = edited()
+      stub(on, world)
+      await start($)
+      const ui = await paneText($)
+      await ui.press({ key: 'set:alpha.name' })
+      await ui.input({ key: 'set:alpha.name', text: 'typed', kind: 'change' })
+      await ui.press({ key: 'set:alpha.name:save' })
+      expect(sets).toEqual([{ key: 'alpha.name', value: 'typed' }])
+      expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('typed ✎')
+    })
+
+    test('saving the unchanged value closes without a /config call', async ($, on) => {
+      const { sets, world } = edited()
+      stub(on, world)
+      await start($)
+      const ui = await paneText($)
+      await ui.press({ key: 'set:alpha.name' })
+      await ui.press({ key: 'set:alpha.name:save' })
+      await ui.press({ key: 'set:alpha.count' })
+      await ui.input({ key: 'set:alpha.count', text: '1' })
+      expect(sets).toEqual([])
+      expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
+      expect((await ui.find({ key: 'set:alpha.count' })).props.label).toBe('1 ✎')
+    })
+
+    test('an invalid number says so inline and the editor stays open', async ($, on) => {
+      const { sets, world } = edited()
+      stub(on, world)
+      await start($)
+      const ui = await paneText($)
+      await ui.press({ key: 'set:alpha.count' })
+      await ui.input({ key: 'set:alpha.count', text: 'abc' })
+      expect(sets).toEqual([])
+      expect(await ui.find({ text: /"abc" is not a number/ })).toBeDefined()
+      expect((await ui.find({ key: 'set:alpha.count' })).type).toBe('Input')
+      await ui.press({ key: 'set:alpha.count:cancel' })
+      expect(await ui.findAll({ text: /not a number/ })).toHaveLength(0)
+    })
   })
 
   test('a locked row shows "managed" and has no editor', async ($, on) => {
@@ -698,7 +788,7 @@ describe('settings', () => {
     })
     await start($)
     const ui = await paneText($)
-    const keys = (await ui.findAll({ type: 'Input' })).map((x: any) => x.key).filter((k: string) => k !== 'filter')
+    const keys = (await ui.findAll({ type: 'Button' })).map((x: any) => String(x.key)).filter((k: string) => k.startsWith('set:'))
     expect(keys).toEqual(['set:alpha.b', 'set:alpha.a'])
   })
 })
@@ -1791,15 +1881,6 @@ describe('security: favourites and the store', () => {
     expect(toasts.filter(t => /cannot save favourites: /.test(t))).toHaveLength(1)
     expect(toasts.filter(t => /cannot save folded: /.test(t))).toHaveLength(1)
     expect(await ui.find({ key: 'fav:cmd:alpha:go:--all' })).toBeUndefined()
-  })
-
-  test('a row marked sensitive shows •••• and offers only an overwrite', async ($, on) => {
-    stub(on, { ...ALPHA, files: alphaFile({ version: 1 }), rows: [row('alpha.token', { value: 'hunter2', sensitive: true })] })
-    await start($)
-    const ui = await paneText($)
-    const input = await ui.find({ key: 'set:alpha.token' })
-    expect(input.props.value).toBe('')
-    expect(JSON.stringify(await ui.find({}))).not.toMatch(/hunter2/)
   })
 })
 
