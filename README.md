@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/github/license/agentic-workbench/agent-quick-menu)](LICENSE)
 [![CI](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml/badge.svg)](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml)
+[![Listed in awesome-claude-code-mods](https://awesome.re/mentioned-badge.svg)](https://github.com/karanb192/awesome-claude-code-mods)
+[![validates](https://raw.githubusercontent.com/karanb192/awesome-claude-code-mods/main/badges/agentic-workbench--agent-quick-menu--agent-quick-menu-validates.svg)](https://github.com/karanb192/awesome-claude-code-mods)
 
 A pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.
 
