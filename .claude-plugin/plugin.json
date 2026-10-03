@@ -16,6 +16,13 @@
       "title": "Band hotkeys",
       "description": "Bind the digits 1-9 to the pinned commands of this menu's own plugins in the band above the prompt, by their place in the pinned list.",
       "default": false
+    },
+    "buttonStyle": {
+      "type": "string",
+      "title": "Button style",
+      "description": "How command and toolbar buttons look: brackets (the plain [ label ]), pill (a filled one-line chip) or box (a rounded three-row frame; the one-row band uses pill).",
+      "default": "brackets",
+      "options": ["brackets", "pill", "box"]
     }
   },
   "keywords": [

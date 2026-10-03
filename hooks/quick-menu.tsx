@@ -618,8 +618,47 @@ async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> 
   $.ui.invalidate('ui.render')
 }
 
+/** The look of command and toolbar buttons: `brackets` is the engine's `[ label ]`, `pill` a filled one-line chip, `box` a rounded three-row frame (never in the one-row band). */
+export type ButtonStyle = 'brackets' | 'pill' | 'box'
+const PILL_BG = '#2d4f67'
+const PILL_BG_HOVER = '#3d6a89'
+const BOX_BORDER = 'gray'
+const BOX_BORDER_HOVER = 'cyan'
+
+/** The `buttonStyle` option; brackets unless the person picked another. */
+let buttonStyle: ButtonStyle = 'brackets'
+const bandStyle = (): ButtonStyle => (buttonStyle === 'box' ? 'pill' : buttonStyle)
+
+/** Cells a styled button takes beyond its label, and the gap that follows it before the next element. */
+const chromeOf = (style: ButtonStyle): number => (style === 'brackets' ? 4 : style === 'pill' ? 2 : 4)
+const gapOf = (style: ButtonStyle): number => (style === 'brackets' ? 2 : 1)
+
+type StyledButton = { key: string; label: string; onPress: () => void; hotkey?: string; plain?: boolean; minWidth?: number }
+
+/** A button in the chosen look: brackets draw the engine's Button, pill and box wrap a plain Button in a Box (keyed, so the hover applies). */
+function styledButton(ui: Ui, style: ButtonStyle, b: StyledButton) {
+  const { Box, Button } = ui
+  const hotkey = b.hotkey === undefined ? {} : { hotkey: b.hotkey }
+  if (style === 'brackets') {
+    return <Button key={b.key} label={b.label} {...(b.plain && { plain: true as const })} {...hotkey} onPress={b.onPress} />
+  }
+  const inner = <Button key={b.key} label={pad(b.label, b.minWidth ?? 0)} plain {...hotkey} onPress={b.onPress} />
+  if (style === 'pill') {
+    return (
+      <Box key={`pill:${b.key}`} backgroundColor={PILL_BG} paddingX={1} hover={{ backgroundColor: PILL_BG_HOVER }}>
+        {inner}
+      </Box>
+    )
+  }
+  return (
+    <Box key={`box:${b.key}`} borderStyle="round" borderColor={BOX_BORDER} paddingX={1} hover={{ borderColor: BOX_BORDER_HOVER }}>
+      {inner}
+    </Box>
+  )
+}
+
 /** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label; `cmdPad`: its longest command label. */
-type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; cmdPad: number; openChoice: string; columns: number }
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; cmdPad: number; openChoice: string; columns: number; style: ButtonStyle }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
@@ -742,23 +781,26 @@ function renderCommand(
   const tag = runsTag(plugin, c)
   const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, 60)
   // The help text takes what is left of the line after star, button, hint and tag; with under 8 cells left it is dropped.
-  const used = 2 + Math.max(fav.cmdPad, width(c.label)) + 4 + 2 + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
+  const used = 2 + Math.max(fav.cmdPad, width(c.label)) + chromeOf(fav.style) + gapOf(fav.style) + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
   const room = fav.columns - used - 1
   const help = c.isAvailable && c.description && room >= 8 ? clip(c.description, room) : null
   return (
-    <Box key={`row:${id}`} flexDirection="row">
+    <Box key={`row:${id}`} flexDirection="row" {...(fav.style === 'box' && { alignItems: 'center' as const })}>
       {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
       <Text> </Text>
       {c.isAvailable ? (
-        <Button
-          key={id}
-          label={tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label}
-          onPress={() => void pressCommand($, plugin, c)}
-        />
+        styledButton(ui, fav.style, {
+          key: id,
+          label: tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label,
+          onPress: () => void pressCommand($, plugin, c),
+          minWidth: fav.cmdPad,
+        })
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
-      {c.isAvailable && <Text>{' '.repeat(Math.max(0, fav.cmdPad - width(c.label)) + 2)}</Text>}
+      {c.isAvailable && (
+        <Text>{' '.repeat(fav.style === 'brackets' ? Math.max(0, fav.cmdPad - width(c.label)) + gapOf(fav.style) : gapOf(fav.style))}</Text>
+      )}
       {c.isAvailable && <Text dimColor>{runs}</Text>}
       {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
       {help !== null && <Text dimColor>{` ${help}`}</Text>}
@@ -955,7 +997,7 @@ function blockRows(b: Block, isOpen: boolean): number {
   return 1 + (b.note ? 1 : 0) + Math.min(b.commands.length, MAX_SHOWN_COMMANDS) + (b.commands.length > MAX_SHOWN_COMMANDS ? 1 : 0) + b.rows.length
 }
 
-function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true, columns = 0) {
+function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true, columns = 0, style: ButtonStyle = buttonStyle) {
   const { Box, Text, Button } = ui
   const isOpen = isBlockOpen(d, b.id)
   const labelRows = b.favs
@@ -966,7 +1008,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
     ? b.favs.flatMap(f => (f.kind === 'command' ? [findFavCommand(f, d.all)?.label ?? ''] : []))
     : b.commands.slice(0, MAX_SHOWN_COMMANDS).map(c => c.label)
   const cmdPad = Math.max(0, ...cmdLabels.map(l => width(l)))
-  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, cmdPad, openChoice: d.openChoice, columns })
+  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, cmdPad, openChoice: d.openChoice, columns, style })
   let body: RenderNode[] | null = null
   if (!showBody) {
     body = null
@@ -1028,10 +1070,10 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
   const filterText = await read($, filter)
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="row" columnGap={2}>
+      <Box flexDirection="row" columnGap={2} {...(buttonStyle === 'box' && { alignItems: 'center' as const })}>
         <Text bold color="cyan">Quick menu</Text>
-        <Button key="expand-all" label="Expand all" hotkey="e" onPress={() => void foldAll($, ids, false)} />
-        <Button key="collapse-all" label="Collapse all" hotkey="c" onPress={() => void foldAll($, ids, true)} />
+        {styledButton(ui, buttonStyle, { key: 'expand-all', label: 'Expand all', hotkey: 'e', onPress: () => void foldAll($, ids, false) })}
+        {styledButton(ui, buttonStyle, { key: 'collapse-all', label: 'Collapse all', hotkey: 'c', onPress: () => void foldAll($, ids, true) })}
         <Text dimColor>{`${pluralOf(sectionBlocks.length, 'section')} · ${pluralOf(commandTotal, 'command')} · ${pluralOf(settingTotal, 'setting')}`}</Text>
       </Box>
       {d.favs.length === 0 && <Text dimColor>Press ☆ on a row to pin it to the band.</Text>}
@@ -1156,7 +1198,7 @@ function renderBandMenu($: EngineInterface, ui: Ui, d: MenuData, budget: number)
   for (const b of d.blocks) {
     const need = blockRows(b, isBlockOpen(d, b.id))
     if (left < 1) break
-    out.push(renderBlock($, ui, b, d, true, need <= left))
+    out.push(renderBlock($, ui, b, d, true, need <= left, 0, bandStyle()))
     left -= Math.min(need, left)
   }
   return out
@@ -1165,7 +1207,9 @@ function renderBandMenu($: EngineInterface, ui: Ui, d: MenuData, budget: number)
 async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown): Promise<RenderElement> {
   if (e.props.hasSurvey) return next() as Promise<RenderElement>
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
-  const { Box, Button, Text } = $.ui.resolve(e)
+  const ui = $.ui.resolve(e)
+  const { Box, Button, Text } = ui
+  const style = bandStyle()
   const d = await loadMenu($)
   // A glyph every width table agrees is one cell: ☰ (U+2630) is wide to the engine and narrow to a terminal on older
   // Unicode tables, so the row drifts by a cell and the redraw after a band change leaves a stale cell behind.
@@ -1178,26 +1222,26 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
     if (!item) continue
     // The digit is the favourite's own place in the pinned list, so a gap never renumbers the others.
     const digit = bandHotkeys && item.isOwn && position < 9 ? position + 1 : undefined
-    used += width(item.label) + (digit === undefined ? 0 : 3) + 2
+    used += width(item.label) + (digit === undefined ? 0 : 3) + 2 + (style === 'brackets' ? 0 : chromeOf(style))
     if (used > e.props.bodyColumns) break
     items.push(digit === undefined ? item : { ...item, digit })
   }
-  const menu = (await isUnplaced($)) ? renderBandMenu($, $.ui.resolve(e), d, e.props.maxRows - 2) : null
+  const menu = (await isUnplaced($)) ? renderBandMenu($, ui, d, e.props.maxRows - 2) : null
   const below = (await next()) as RenderNode | null | undefined
   return (
     <Box flexDirection="column">
       <Box columnGap={1}>
         <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void togglePane($)} />
         {items.length > 0 && <Text dimColor>│</Text>}
-        {items.map((item, i) => (
-          <Button
-            key={`band:${i + 1}`}
-            label={item.label}
-            plain
-            {...(item.digit !== undefined && { hotkey: String(item.digit) })}
-            onPress={item.onPress}
-          />
-        ))}
+        {items.map((item, i) =>
+          styledButton(ui, style, {
+            key: `band:${i + 1}`,
+            label: item.label,
+            plain: true,
+            ...(item.digit !== undefined && { hotkey: String(item.digit) }),
+            onPress: item.onPress,
+          }),
+        )}
       </Box>
       {menu && (
         <Box key="band:close-row">
@@ -1215,6 +1259,7 @@ let bandHotkeys = false
 
 export const register: Register = (on, options) => {
   bandHotkeys = options.bandHotkeys === true
+  buttonStyle = options.buttonStyle === 'pill' || options.buttonStyle === 'box' ? options.buttonStyle : 'brackets'
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)

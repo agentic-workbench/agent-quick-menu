@@ -1672,3 +1672,70 @@ describe('go-live polish', () => {
     expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))).toHaveLength(1)
   })
 })
+
+describe('buttonStyle', () => {
+  const wrappers = async (ui: any, prefix: string) =>
+    (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith(prefix))
+
+  test('brackets is the default: bare buttons, no wrapper', async ($, on) => {
+    stub(on, FAV_WORLD())
+    await start($)
+    const ui = await paneText($)
+    expect(await wrappers(ui, 'pill:')).toHaveLength(0)
+    expect(await wrappers(ui, 'box:')).toHaveLength(0)
+    expect((await ui.find({ key: 'expand-all' })).props.plain).toBeUndefined()
+  })
+
+  test('pill wraps a plain Button of each command and toolbar button in a filled Box', { options: { buttonStyle: 'pill' } }, async ($, on) => {
+    stub(on, FAV_WORLD())
+    await start($)
+    const ui = await paneText($)
+    const pills = await wrappers(ui, 'pill:')
+    expect(pills.length).toBeGreaterThanOrEqual(4)
+    for (const p of pills) {
+      expect(p.props.backgroundColor).toEqual(expect.any(String))
+      expect(p.props.paddingX).toBe(1)
+      expect(p.props.borderStyle).toBeUndefined()
+    }
+    const toolbar = await ui.find({ key: 'expand-all' })
+    expect(toolbar.props.plain).toBe(true)
+    expect(toolbar.props.hotkey).toBe('e')
+    expect(await wrappers(ui, 'pill:expand-all')).toHaveLength(1)
+    // labels are padded to the longest, so the hints line up; stars and toggles stay as they were
+    const labels = (await ui.findAll({ type: 'Button' })).filter((b: any) => /^(Go|stop)\s*$/.test(String(b.props.label)))
+    expect(labels.map((b: any) => b.props.label)).toEqual(['Go  ', 'stop'])
+    expect(await ui.find({ key: 'star:set:alpha.flag' })).toBeDefined()
+  })
+
+  test('box frames the pane buttons in a round border', { options: { buttonStyle: 'box' } }, async ($, on) => {
+    stub(on, FAV_WORLD())
+    await start($)
+    const ui = await paneText($)
+    const boxes = await wrappers(ui, 'box:')
+    expect(boxes.length).toBeGreaterThanOrEqual(4)
+    for (const b of boxes) {
+      expect(b.props.borderStyle).toBe('round')
+      expect(b.props.borderColor).toEqual(expect.any(String))
+      expect(b.props.backgroundColor).toBeUndefined()
+    }
+    expect((await ui.find({ key: 'expand-all' })).props.plain).toBe(true)
+    expect(await wrappers(ui, 'pill:')).toHaveLength(0)
+  })
+
+  test('the band uses pill when box is chosen, and counts the padding', { options: { buttonStyle: 'box' } }, async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'go --all' }]]])
+    stub(on, FAV_WORLD({ store }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    expect(await wrappers(ui, 'box:')).toHaveLength(0)
+    const pills = await wrappers(ui, 'pill:')
+    expect(pills.map((p: any) => p.props.backgroundColor)).toEqual([expect.any(String)])
+    expect((await ui.find({ key: 'band:1' })).props.plain).toBe(true)
+    // menu 8 + 5, divider 2, reserve 4 = 19; Go: 2 + 2 padding + 2 = 6 -> 25
+    const count = async (columns: number) =>
+      (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).length
+    expect(await count(25)).toBe(2)
+    expect(await count(24)).toBe(1)
+  })
+})
