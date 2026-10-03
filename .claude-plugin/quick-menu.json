@@ -1,9 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
-  "title": "Quick menu",
   "commands": [
-    { "command": "menu", "label": "Refresh", "args": "refresh", "description": "Discover plugin menus again" }
+    {
+      "command": "menu",
+      "label": "Refresh",
+      "args": "refresh",
+      "description": "Discover plugin menus again"
+    }
   ],
   "settings": []
 }

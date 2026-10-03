@@ -5,7 +5,7 @@
 
 A quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.
 
-<!-- screenshot: docs/screenshot.png, to be added -->
+![The quick menu pane beside the transcript, and the menu button in the band above the prompt](docs/screenshot.png)
 
 ## Requirements
 
