@@ -20,7 +20,7 @@ type World = {
   enabled?: Record<string, boolean>
   registry?: Record<string, Record<string, unknown>[]>
   files?: Record<string, string>
-  env?: Record<string, string>
+  vars?: Record<string, string>
   commands?: string[]
   pluginCommands?: { name: string; plugin: string; description?: string }[]
   rows?: Record<string, unknown>[]
@@ -57,7 +57,7 @@ function stub(on: any, w: World) {
     ...w.files,
     ...(w.registry && { [REGISTRY]: JSON.stringify({ version: 2, plugins: registry() }) }),
   })
-  const env = (): Record<string, string> => ({ HOME, ...w.env })
+  const vars = (): Record<string, string> => ({ HOME, ...w.vars })
   on('session.start', () => (w.onStart?.(), { cwd: '/tmp' }))
   on('command.register', () => ({ value: undefined }))
   on('ui.open', (_$: unknown, e: unknown) => (
@@ -73,7 +73,7 @@ function stub(on: any, w: World) {
     return { value: undefined }
   })
   on('settings.read', () => ({ value: { enabledPlugins: w.enabled ?? {} } }))
-  on('env.get', (_$: unknown, e: { name: string }) => ({ value: env()[e.name] }))
+  on('env.get', (_$: unknown, e: { name: string }) => ({ value: vars()[e.name] }))
   const isSelf = (path: string): boolean => w.self !== undefined && !(path in files()) && path.endsWith(MENU_FILE)
   on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() || isSelf(e.path) }))
   on('fs.stat', (_$: unknown, e: { path: string }) => {
@@ -252,7 +252,7 @@ describe('discovery', () => {
   test('the registry is read from CLAUDE_CONFIG_DIR when set', async ($, on) => {
     stub(on, {
       enabled: { 'alpha@mk': true },
-      env: { CLAUDE_CONFIG_DIR: '/cfg' },
+      vars: { CLAUDE_CONFIG_DIR: '/cfg' },
       files: {
         '/cfg/plugins/installed_plugins.json': file({
           version: 2,
@@ -309,7 +309,7 @@ describe('discovery', () => {
   test('CLAUDE_CODE_PLUGIN_DIRS roots are discovered by their plugin.json name', async ($, on) => {
     stub(on, {
       registry: {},
-      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one:/dev/two' },
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one:/dev/two' },
       files: {
         '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
         '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
@@ -324,7 +324,7 @@ describe('discovery', () => {
   test('CLAUDE_CODE_PLUGIN_DIRS splits on ; when one is present', async ($, on) => {
     stub(on, {
       registry: {},
-      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one;/dev/two:x' },
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one;/dev/two:x' },
       files: {
         '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
         '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
@@ -1009,7 +1009,7 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
   test('a plugin whose menu file was read through CLAUDE_CODE_PLUGIN_DIRS is not listed twice', async ($, on) => {
     stub(on, {
       registry: {},
-      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one' },
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one' },
       files: {
         '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
         '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
@@ -1160,7 +1160,7 @@ describe('menu command, slow discovery, shadowing and own file', () => {
     stub(on, {
       enabled: { 'repo-tools@mk': true },
       registry: { 'repo-tools@mk': [{ scope: 'user', installPath: '/p/rt-installed' }] },
-      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/rt' },
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/rt' },
       files: {
         '/dev/rt/.claude-plugin/plugin.json': file({ name: 'repo-tools' }),
         '/dev/rt/.claude-plugin/quick-menu.json': file({
@@ -1456,14 +1456,14 @@ describe('security: paths', () => {
   })
 
   test('a relative CLAUDE_CONFIG_DIR skips the registry with a problem', async ($, on) => {
-    stub(on, { enabled: { 'alpha@mk': true }, env: { CLAUDE_CONFIG_DIR: 'cfg' } })
+    stub(on, { enabled: { 'alpha@mk': true }, vars: { CLAUDE_CONFIG_DIR: 'cfg' } })
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /CLAUDE_CONFIG_DIR: must be an absolute path/ })).toBeDefined()
   })
 
   test('no HOME skips the registry without a problem line', async ($, on) => {
-    stub(on, { ...ALPHA, env: { HOME: '' }, files: alphaFile({ version: 1, title: 'Alpha' }) })
+    stub(on, { ...ALPHA, vars: { HOME: '' }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /▾ Alpha/ })).toBeUndefined()
@@ -1471,14 +1471,14 @@ describe('security: paths', () => {
   })
 
   test('USERPROFILE stands in for an empty HOME', async ($, on) => {
-    stub(on, { ...ALPHA, env: { HOME: '', USERPROFILE: HOME }, files: alphaFile({ version: 1, title: 'Alpha' }) })
+    stub(on, { ...ALPHA, vars: { HOME: '', USERPROFILE: HOME }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /▾ Alpha/ })).toBeDefined()
   })
 
   test('a relative CLAUDE_CODE_PLUGIN_DIRS root is a problem, not read', async ($, on) => {
-    stub(on, { registry: {}, env: { CLAUDE_CODE_PLUGIN_DIRS: 'rel/dir' } })
+    stub(on, { registry: {}, vars: { CLAUDE_CODE_PLUGIN_DIRS: 'rel/dir' } })
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /rel\/dir: cannot identify plugin dir: not an absolute path/ })).toBeDefined()

@@ -4,11 +4,17 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-03
+
+### Changed
+
+- The marketplace entry names its owner and author without links.
+
 ## [0.1.3] - 2026-10-03
 
 ### Changed
 
-- The manifests carry no `$schema` URLs and `plugin.json` no `icon` field; the icon is found at its default path `.claude-plugin/icon.png`.
+- The manifests carry no `$schema` URLs and `plugin.json` no `icon` field; Claude Code finds the icon at its default path.
 
 ## [0.1.2] - 2026-10-03
 
@@ -42,7 +48,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.0...v0.1.1
