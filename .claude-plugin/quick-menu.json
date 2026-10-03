@@ -8,5 +8,8 @@
       "description": "Discover plugin menus again"
     }
   ],
-  "settings": []
+  "settings": [
+    "buttonStyle",
+    "bandHotkeys"
+  ]
 }
