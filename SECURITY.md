@@ -24,7 +24,7 @@ A button runs a slash command through Claude Code (`$.command.run`), with the co
 
 ### What it reads
 
-- Environment variables `HOME`, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_DIRS`.
+- Environment variables `HOME`, `USERPROFILE`, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_DIRS`.
 - The plugin registry (`installed_plugins.json` under the Claude config directory) and `enabledPlugins` from your settings.
 - `.claude-plugin/plugin.json` of the plugin folders named in `CLAUDE_CODE_PLUGIN_DIRS`, and `.claude-plugin/quick-menu.json` of each enabled plugin.
 - The roots `plugin.register` hands out for plugins loaded with `--plugin-dir`.

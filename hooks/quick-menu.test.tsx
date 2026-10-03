@@ -317,6 +317,21 @@ describe('discovery', () => {
     expect(await ui.find({ text: /two: cannot identify plugin dir/ })).toBeDefined()
   })
 
+  test('CLAUDE_CODE_PLUGIN_DIRS splits on ; when one is present', async ($, on) => {
+    stub(on, {
+      registry: {},
+      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one;/dev/two:x' },
+      files: {
+        '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
+        '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
+      },
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ devone$/ })).toBeDefined()
+    expect(await ui.find({ text: /\/dev\/two:x: cannot identify plugin dir/ })).toBeDefined()
+  })
+
   test('/menu refresh reruns discovery and toasts the counts when it lands', async ($, on) => {
     const toasts: string[] = []
     on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
@@ -891,10 +906,9 @@ describe('folding', () => {
     await start($)
     const ui = await paneText($)
     const flag = await ui.find({ key: 'set:alpha.flag' })
-    const name = await ui.find({ key: 'set:alpha.longer_name' })
     expect(flag.props.label).toBe('off')
     expect(await ui.find({ text: 'flag         ' })).toBeDefined()
-    expect(name.props.label).toBe('longer_name  ')
+    expect(await ui.find({ text: 'longer_name  ' })).toBeDefined()
   })
 
   test('a locked row is dim and says managed', async ($, on) => {
@@ -941,7 +955,9 @@ describe('narrow terminal', () => {
     await (await mountBand($)).press({ key: 'band:menu' })
     const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 3 })
     const heads = (await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))
-    expect(heads).toHaveLength(2)
+    expect(heads).toHaveLength(1)
+    // The menu button row, the Close row and the section headers together stay within maxRows.
+    expect(2 + heads.length).toBeLessThanOrEqual(3)
   })
 
   test('a placed pane leaves the band to its one line', async ($, on) => {
@@ -1108,6 +1124,25 @@ describe('menu command, slow discovery, shadowing and own file', () => {
   })
 
   // The test kit raises no plugin.register, so the --plugin-dir root comes in through CLAUDE_CODE_PLUGIN_DIRS, ranked with it.
+  test('read-only and input rows draw the label and the value with no colon between', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1 }),
+      rows: [
+        row('alpha.name', { label: 'Auto-update channel', value: 'latest' }),
+        row('alpha.lang', { label: 'Language', value: 'Default (English)', isLocked: true }),
+      ],
+    })
+    await start($)
+    const ui = await paneText($)
+    expect((await ui.findAll({ type: 'Input' })).filter((x: any) => x.key !== 'filter').every((x: any) => x.props.label === undefined)).toBe(true)
+    const texts = await textsOf(ui)
+    expect(texts.some(t => /^Auto-update channel\s+$/.test(t))).toBe(true)
+    expect(texts.some(t => t.includes(':') && /Language|latest/.test(t))).toBe(false)
+    const mobile = await paneText($, 'mobile')
+    expect((await textsOf(mobile)).some(t => /^Auto-update channel\s+latest$/.test(t))).toBe(true)
+  })
+
   test('a --plugin-dir root shadows the installed copy of the same plugin, and its menu file is read', async ($, on) => {
     stub(on, {
       enabled: { 'repo-tools@mk': true },
@@ -1200,6 +1235,33 @@ describe('security: what a button runs', () => {
     expect(texts.filter(t => t.includes('runs ')).length).toBe(2)
   })
 
+  const describedWorld = (): World => ({
+    ...FOREIGN,
+    commands: ['go'],
+    files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', description: 'Runs the whole thing now '.repeat(6) }] }),
+  })
+  const textsAt = async ($: any, bodyColumns: number) => {
+    const ui = await $.ui.mount({ plugin: 'agent-quick-menu', surface: 'terminal', component: 'Pane', props: { ...(PANE_PROPS as object), bodyColumns }, requestId: 'quick-menu' })
+    await ui.press({ key: 'expand-all' })
+    return textsOf(ui)
+  }
+
+  test('a command description is dim text after the hint, clipped so the row fits one line', async ($, on) => {
+    stub(on, describedWorld())
+    await start($)
+    const wide = (await textsAt($, 60)).find(t => t.includes('Runs the whole'))!
+    expect(wide).toBeDefined()
+    // star and space 2, `[ Go ]` 6, ` /go` 4, then the help text itself
+    expect(12 + [...wide].length).toBeLessThanOrEqual(60)
+    expect(wide.endsWith('…')).toBe(true)
+  })
+
+  test('a command description is dropped when the width is short', async ($, on) => {
+    stub(on, describedWorld())
+    await start($)
+    expect((await textsAt($, 18)).some(t => t.includes('Runs'))).toBe(false)
+  })
+
   test('a built-in or another plugin\'s command needs a second press within 5 s, in the pane and the band', async ($, on) => {
     const clock = mock.clock(on)
     const calls: { command: string }[] = []
@@ -1249,6 +1311,19 @@ describe('security: menu file input', () => {
       expect(bad({ commands: [{ command: 'a', args: `a${ch}b` }] })).toMatchObject({ ok: false })
       expect(bad({ commands: [{ command: 'a', description: `a${ch}b` }] })).toMatchObject({ ok: false })
     }
+  })
+
+  test('tag characters and variation selectors are rejected', () => {
+    for (const ch of ['\u{E0041}', '\u{E007F}', '\ufe0f', '\u{E0100}', '\u00ad', '\u180e']) {
+      expect(bad({ commands: [{ command: 'a', args: `x${ch}y` }] })).toMatchObject({ ok: false })
+      expect(bad({ title: `x${ch}y` })).toMatchObject({ ok: false })
+    }
+  })
+
+  test('lengths count code points, not UTF-16 units', () => {
+    const emoji = (n: number) => '\u{1F600}'.repeat(n)
+    expect(bad({ title: emoji(60) })).toMatchObject({ ok: true })
+    expect(bad({ title: emoji(61) })).toMatchObject({ ok: false })
   })
 
   test('length limits and counts', () => {
@@ -1380,6 +1455,13 @@ describe('security: paths', () => {
     const ui = await paneText($)
     expect(await ui.find({ text: /▾ Alpha/ })).toBeUndefined()
     expect(await ui.find({ text: /Problems/ })).toBeUndefined()
+  })
+
+  test('USERPROFILE stands in for an empty HOME', async ($, on) => {
+    stub(on, { ...ALPHA, env: { HOME: '', USERPROFILE: HOME }, files: alphaFile({ version: 1, title: 'Alpha' }) })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ Alpha/ })).toBeDefined()
   })
 
   test('a relative CLAUDE_CODE_PLUGIN_DIRS root is a problem, not read', async ($, on) => {

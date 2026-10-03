@@ -37,6 +37,15 @@ Check a name by typing `/` in Claude Code. A command that is not available is hi
 
 `settings` lists field names from the plugin's own `userConfig`. They appear as rows in the plugin's section, in the given order.
 
+## Limits
+
+- Rejected characters, in every string: control characters, line and paragraph separators, format characters (bidi marks, zero-width characters, soft hyphen, tag characters), private-use characters and variation selectors. A file holding one is skipped and reported under Problems.
+- Lengths, counted in code points: `title` 60, `label` 40, `command` 64, `args` 500, `description` 200.
+- At most 50 `commands` and 50 `settings`.
+- The file must be a regular file of at most 64 KiB, not a symlink.
+- Reserved titles: `Claude Code`, `Favourites`, `built-in`, and the name of another plugin, in any case.
+- `CLAUDE_CODE_PLUGIN_DIRS` is split on `:`, or on `;` where a drive letter holds a colon (Windows).
+
 ## Plugins without the file
 
 A plugin without `quick-menu.json` gets a settings-only section when it has `userConfig` rows (all of them, no commands). Without rows it is not listed.

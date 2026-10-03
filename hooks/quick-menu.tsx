@@ -26,8 +26,8 @@ const MAX_PROBLEM = 300
 const CONFIRM_MS = 5000
 const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200 } as const
 /** Control, line, bidi and zero-width characters: never shown, never accepted. */
-const BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/
-const BAD_CHARS_ALL = new RegExp(BAD_CHARS.source, 'g')
+const BAD_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u
+const BAD_CHARS_ALL = new RegExp(BAD_CHARS.source, 'gu')
 const RESERVED_TITLES = ['claude code', 'favourites', 'built-in']
 
 /** Text from outside, safe to show: bad characters replaced, cut to `max`. */
@@ -46,7 +46,7 @@ function textError(where: string, value: unknown, max: number, nonBlank = false)
   if (typeof value !== 'string') return `${where} must be a ${nonBlank ? 'non-empty ' : ''}string`
   if (nonBlank && value.trim() === '') return `${where} must be a non-empty string`
   if (BAD_CHARS.test(value)) return `${where} holds a control, line-break, bidi or zero-width character`
-  if (value.length > max) return `${where} is longer than ${max} characters`
+  if ([...value].length > max) return `${where} is longer than ${max} characters`
   return null
 }
 
@@ -557,7 +557,7 @@ async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> 
 }
 
 /** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label. */
-type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; openChoice: string }
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; openChoice: string; columns: number }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
@@ -600,13 +600,15 @@ function renderSetting(
   } else if (isSecret) {
     control =
       Input && fav.hasFields ? (
-        <Input
-          key={id}
-          label={`${label}  `}
-          value=""
-          placeholder="••••  (type a new value)"
-          onSubmit={(value: string) => void (value === '' ? undefined : writeSetting($, row, value))}
-        />
+        <Box key={`field:${id}`} flexDirection="row">
+          <Text>{`${label}  `}</Text>
+          <Input
+            key={id}
+            value=""
+            placeholder="••••  (type a new value)"
+            onSubmit={(value: string) => void (value === '' ? undefined : writeSetting($, row, value))}
+          />
+        </Box>
       ) : (
         <Text key={id}>{`${label}  ${shown}`}</Text>
       )
@@ -638,13 +640,16 @@ function renderSetting(
         </Box>
       )
   } else if (Input && fav.hasFields) {
+    // The label is its own Text: an Input's own label draws a `: ` before the value.
     control = (
-      <Input
-        key={id}
-        label={`${label}  `}
-        value={shown}
-        onSubmit={(value: string) => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
-      />
+      <Box key={`field:${id}`} flexDirection="row">
+        <Text>{`${label}  `}</Text>
+        <Input
+          key={id}
+          value={shown}
+          onSubmit={(value: string) => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
+        />
+      </Box>
     )
   } else {
     control = <Text key={id}>{`${label}  ${shown}`}</Text>
@@ -672,6 +677,10 @@ function renderCommand(
   const id = fav.prefix + rid
   const tag = runsTag(plugin, c)
   const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, 60)
+  // The help text takes what is left of the line after star, button, hint and tag; with under 8 cells left it is dropped.
+  const used = 2 + width(c.label) + 4 + 1 + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
+  const room = fav.columns - used - 1
+  const help = c.isAvailable && c.description && room >= 8 ? clip(c.description, room) : null
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
@@ -687,6 +696,7 @@ function renderCommand(
       )}
       {c.isAvailable && <Text dimColor>{` ${runs}`}</Text>}
       {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
+      {help !== null && <Text dimColor>{` ${help}`}</Text>}
       {state.queued[rid] && <Text dimColor> queued</Text>}
     </Box>
   )
@@ -880,14 +890,14 @@ function blockRows(b: Block, isOpen: boolean): number {
   return 1 + (b.note ? 1 : 0) + (b.commands.length > 0 ? 1 : 0) + b.rows.length
 }
 
-function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true) {
+function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true, columns = 0) {
   const { Box, Text, Button } = ui
   const isOpen = isBlockOpen(d, b.id)
   const labelRows = b.favs
     ? b.favs.flatMap(f => (f.kind === 'setting' ? d.rows.filter(r => r.key === f.key) : []))
     : b.rows
   const widest = Math.max(0, ...labelRows.map(r => width(r.label)))
-  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, openChoice: d.openChoice })
+  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, openChoice: d.openChoice, columns })
   let body: RenderNode[] | null = null
   if (!showBody) {
     body = null
@@ -935,7 +945,7 @@ async function setFilter($: EngineInterface, value: string): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
-async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
+async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], columns: number) {
   const ui = $.ui.resolve(e)
   const { Box, Text, Button } = ui
   const p = await read($, problems)
@@ -970,7 +980,7 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
       {sectionBlocks.length === 0 && (
         <Text dimColor>{d.filter === '' ? 'Quick menu: nothing here yet.' : `No match for "${d.filter}".`}</Text>
       )}
-      {d.blocks.map(b => renderBlock($, ui, b, d, hasFields))}
+      {d.blocks.map(b => renderBlock($, ui, b, d, hasFields, true, columns))}
       {p.length > 0 && (
         <Box key="problems" flexDirection="column">
           <Text bold>Problems</Text>
@@ -1086,7 +1096,7 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
     if (used > e.props.bodyColumns) break
     items.push(digit === undefined ? item : { ...item, digit })
   }
-  const menu = (await isUnplaced($)) ? renderBandMenu($, $.ui.resolve(e), d, e.props.maxRows - 1) : null
+  const menu = (await isUnplaced($)) ? renderBandMenu($, $.ui.resolve(e), d, e.props.maxRows - 2) : null
   const below = (await next()) as RenderNode | null | undefined
   return (
     <Box flexDirection="column">
@@ -1155,7 +1165,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'menu' }, ($, e) => openMenu($, e.args ?? ''))
 
-  on('ui.render', { component: 'Pane', requestId: PANE_ID }, ($, e) => renderMenu($, e))
+  on('ui.render', { component: 'Pane', requestId: PANE_ID }, ($, e) => renderMenu($, e, (e.props as { bodyColumns?: number }).bodyColumns ?? 0))
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, () => next(e)))
 }

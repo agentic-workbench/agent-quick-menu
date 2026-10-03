@@ -26,9 +26,9 @@ function validate(value, schema, path, out) {
     return
   }
   if (typeof value === 'string') {
-    if (schema.minLength !== undefined && value.length < schema.minLength) out.push(`${path}: shorter than ${schema.minLength}`)
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) out.push(`${path}: longer than ${schema.maxLength}`)
-    if (schema.pattern && !new RegExp(schema.pattern).test(value)) out.push(`${path}: does not match ${schema.pattern}`)
+    if (schema.minLength !== undefined && [...value].length < schema.minLength) out.push(`${path}: shorter than ${schema.minLength}`)
+    if (schema.maxLength !== undefined && [...value].length > schema.maxLength) out.push(`${path}: longer than ${schema.maxLength}`)
+    if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) out.push(`${path}: does not match ${schema.pattern}`)
   }
   if (typeOf(value) === 'object') {
     for (const key of schema.required ?? []) if (!(key in value)) out.push(`${path}: missing "${key}"`)

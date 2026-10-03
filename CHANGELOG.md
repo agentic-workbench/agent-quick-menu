@@ -8,7 +8,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 - `/menu` pane with one section per plugin: its commands as buttons and its `userConfig` settings as a label/value table.
 - Claude Code's own settings in a "Claude Code" section; managed-policy rows are locked.
-- A one-line band above the prompt with favourites, digit hotkeys `1` to `9` on an empty prompt, and `ctrl+x tab` to focus it.
+- A one-line band above the prompt with favourites, opt-in digit hotkeys `1` to `9` (`bandHotkeys` setting, default off; own-plugin commands only, numbered by position in the pinned list), and `ctrl+x tab` to focus it.
 - Favourites (`☆` / `★`), foldable sections with `Expand all` / `Collapse all`, and a filter field.
 - `.claude-plugin/quick-menu.json` convention with a JSON schema, and a "Problems" list for skipped files.
 - `/menu refresh` and background discovery after `session.start`.
