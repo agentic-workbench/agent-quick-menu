@@ -33,7 +33,7 @@ Then run `/reload-plugins` in a running session.
 ## Usage
 
 - `/menu` opens the pane. `/menu refresh` discovers plugin menus again.
-- The band above the prompt is one line: `≣ menu │ Pull  Status …` (hotkey `m` while the band is focused, then your favourites). With `bandHotkeys` on, own-plugin commands read `1 Pull  3 Status`, the digit being the place in the pinned list.
+- The band above the prompt is one line: `≣ menu ▸ │ Pull  Status …` (hotkey `m` while the band is focused, then your favourites). The button toggles: it closes the menu when it is open (`▾`) and opens it when closed (`▸`); `/menu` always opens or focuses it. With `bandHotkeys` on, own-plugin commands read `1 Pull  3 Status`, the digit being the place in the pinned list.
 - `ctrl+x tab` focuses the band.
 - Band digits are opt-in: with the `bandHotkeys` setting on (default off) and an empty prompt, `1` to `9` press the pinned commands of this plugin only, numbered by their position in the pinned list (a gap keeps the other numbers). Other plugins' commands and setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.

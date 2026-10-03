@@ -43,6 +43,8 @@ type World = {
   stat?: Record<string, { kind?: string; isLink?: boolean; size?: number }>
   /** Delays `$.command.list()` by this many ms (a slow discovery). */
   listDelay?: number
+  /** What `$.ui.panes()` lists; none by default. */
+  panes?: () => { id: string; isPlaced?: boolean }[]
 }
 
 const MENU_FILE = '/.claude-plugin/quick-menu.json'
@@ -64,7 +66,7 @@ function stub(on: any, w: World) {
     w.open?.(e),
     { value: w.placed === false ? { isPlaced: false, reason: 'terminal too narrow' } : { isPlaced: true } }
   ))
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: w.panes?.() ?? [] }))
   const store = w.store ?? new Map<string, unknown>()
   on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
@@ -713,7 +715,7 @@ describe('band', () => {
     const ui = await mountBand($)
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
-      ['≣ menu', 'm'],
+      ['≣ menu ▸', 'm'],
       ['Go', '1'],
       ['flag: off', undefined],
     ])
@@ -750,14 +752,14 @@ describe('band', () => {
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
     await start($)
-    // menu: 6 + 5 = 11, divider 2, reserve 4 -> 17; Go: 2 + 3 (digit) + 2 = 7 -> 24; stop: 4 + 3 + 2 = 9 -> 33.
+    // menu: 8 + 5 = 13, divider 2, reserve 4 -> 19; Go: 2 + 3 (digit) + 2 = 7 -> 26; stop: 4 + 3 + 2 = 9 -> 35.
     const labels = async (columns: number) =>
       (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).map(
         (b: any) => b.props.label,
       )
-    expect(await labels(33)).toEqual(['≣ menu', 'Go', 'stop'])
-    expect(await labels(32)).toEqual(['≣ menu', 'Go'])
-    expect(await labels(23)).toEqual(['≣ menu'])
+    expect(await labels(35)).toEqual(['≣ menu ▸', 'Go', 'stop'])
+    expect(await labels(34)).toEqual(['≣ menu ▸', 'Go'])
+    expect(await labels(25)).toEqual(['≣ menu ▸'])
   })
 
   test('digit hotkeys sit on own-plugin commands, at the favourite\'s fixed position', { options: { bandHotkeys: true } }, async ($, on) => {
@@ -800,10 +802,10 @@ describe('band', () => {
     emptyBase(on)
     await start($)
     const ui = await mountBand($)
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toEqual(['≣ menu'])
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toEqual(['≣ menu ▸'])
     expect(await textsOf(ui)).toEqual([])
     // No East Asian Wide glyph (☰ U+2630 is one): the engine and a terminal on older Unicode tables disagree on its width.
-    expect([...'≣ menu'].every(ch => !/[\u1100-\u115f\u2630-\u2637\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60]/.test(ch))).toBe(true)
+    expect([...'≣ menu ▸▾'].every(ch => !/[\u1100-\u115f\u2630-\u2637\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60]/.test(ch))).toBe(true)
   })
 
   test('a favourite naming /menu refresh is answered by the menu itself, not queued through $.command.run', async ($, on) => {
@@ -950,6 +952,48 @@ describe('folding', () => {
     await start($)
     await (await mountBand($)).press({ key: 'band:menu' })
     expect(opened).toMatchObject([{ id: 'quick-menu', closeOnEscape: true }])
+  })
+})
+
+describe('band menu toggle', () => {
+  const menuLabel = async ($: any) => (await (await mountBand($)).find({ key: 'band:menu' })).props.label
+
+  test('the button opens the pane when closed and closes it when open', async ($, on) => {
+    const opened: unknown[] = []
+    const closed: unknown[] = []
+    let up = false
+    stub(on, FAV_WORLD({ open: e => (opened.push(e), (up = true)), panes: () => (up ? [{ id: 'quick-menu', isPlaced: true }] : []) }))
+    on('ui.close', (_$: any, e: any) => (closed.push(e), (up = false), { value: undefined }))
+    emptyBase(on)
+    await start($)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    expect(opened).toHaveLength(1)
+    expect(closed).toHaveLength(0)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    expect(opened).toHaveLength(1)
+    expect(closed).toMatchObject([{ id: 'quick-menu' }])
+    await (await mountBand($)).press({ key: 'band:menu' })
+    expect(opened).toHaveLength(2)
+  })
+
+  test('the label shows ▾ while the pane is open and ▸ once the engine closed it', async ($, on) => {
+    let up = false
+    stub(on, FAV_WORLD({ open: () => (up = true), panes: () => (up ? [{ id: 'quick-menu', isPlaced: true }] : []) }))
+    emptyBase(on)
+    await start($)
+    expect(await menuLabel($)).toBe('≣ menu ▸')
+    await (await mountBand($)).press({ key: 'band:menu' })
+    expect(await menuLabel($)).toBe('≣ menu ▾')
+    // Closed by × or Esc: the engine's record no longer lists the pane.
+    up = false
+    expect(await menuLabel($)).toBe('≣ menu ▸')
+  })
+
+  test('another pane does not count as open', async ($, on) => {
+    stub(on, FAV_WORLD({ panes: () => [{ id: 'other', isPlaced: true }] }))
+    emptyBase(on)
+    await start($)
+    expect(await menuLabel($)).toBe('≣ menu ▸')
   })
 })
 
@@ -1501,7 +1545,7 @@ describe('security: digit hotkeys', () => {
     await start($)
     const ui = await mountBand($)
     expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
-      ['≣ menu', 'm'],
+      ['≣ menu ▸', 'm'],
       ['clear', undefined],
       ['go', '3'],
     ])

@@ -1066,6 +1066,8 @@ type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
 
 /** The band's menu button. */
 export const MENU_LABEL = '≣ menu'
+/** The label with the pane's state: ▾ open, ▸ closed (one cell each). */
+export const menuLabelFor = (isOpen: boolean): string => `${MENU_LABEL} ${isOpen ? '▾' : '▸'}`
 
 type BandItem = { label: string; onPress: () => void; isOwn: boolean; digit?: number }
 
@@ -1121,6 +1123,21 @@ async function closePane($: EngineInterface): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
+/** True while the engine lists the pane as open: asked each time, since the person can close it with ×, Esc or a key. */
+async function isPaneOpen($: EngineInterface): Promise<boolean> {
+  try {
+    return (await $.ui.panes()).some(x => x.id === PANE_ID)
+  } catch {
+    return false
+  }
+}
+
+/** The band button: closes the pane when it is open, opens it otherwise. */
+async function togglePane($: EngineInterface): Promise<void> {
+  if (await isPaneOpen($)) await closePane($)
+  else await openPane($)
+}
+
 /** True while the pane was refused for width and is still not drawn. */
 async function isUnplaced($: EngineInterface): Promise<boolean> {
   if (!(await read($, unplaced))) return false
@@ -1152,7 +1169,7 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
   const d = await loadMenu($)
   // A glyph every width table agrees is one cell: ☰ (U+2630) is wide to the engine and narrow to a terminal on older
   // Unicode tables, so the row drifts by a cell and the redraw after a band change leaves a stale cell behind.
-  const menuLabel = MENU_LABEL
+  const menuLabel = menuLabelFor(await isPaneOpen($))
   // The menu button takes its label plus 5 cells, the divider 2, a plain button its label, 3 for a digit and 2 apart; 4 stay free for the engine's `[-]`.
   let used = width(menuLabel) + 5 + 2 + 4
   const items: BandItem[] = []
@@ -1170,7 +1187,7 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
   return (
     <Box flexDirection="column">
       <Box columnGap={1}>
-        <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void openPane($)} />
+        <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void togglePane($)} />
         {items.length > 0 && <Text dimColor>│</Text>}
         {items.map((item, i) => (
           <Button
@@ -1233,6 +1250,13 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'menu' }, ($, e) => openMenu($, e.args ?? ''))
+
+  // Observed only: whoever closes the pane (×, Esc, a key, this plugin), the band redraws with the new label.
+  on('ui.close', async ($, e, next) => {
+    const result = await next(e)
+    if (e.id === PANE_ID) $.ui.invalidate('ui.render')
+    return result
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, ($, e) => renderMenu($, e, (e.props as { bodyColumns?: number }).bodyColumns ?? 0))
 
