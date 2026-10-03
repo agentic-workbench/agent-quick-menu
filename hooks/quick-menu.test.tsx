@@ -1098,7 +1098,7 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
     expect(await ui.find({ text: /fixed\s+false\s+managed/ })).toBeDefined()
   })
 
-  test('a boolean shows a green ● on or a gray ○ off, and a header is bold cyan', async ($, on) => {
+  test('a boolean shows a green ● on or a gray ○ off, and a header is a primary button', async ($, on) => {
     stub(on, {
       ...ALPHA,
       files: alphaFile({ version: 1 }),
@@ -1115,7 +1115,8 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
     expect((await ui.find({ key: 'set:alpha.flag' })).props.label).toBe('on')
     expect((await ui.find({ key: 'set:alpha.off' })).props.label).toBe('off')
     const head = await titleOf(ui, /^alpha$/)
-    expect(head.props.plain).toBe(true)
+    expect(head.props.variant).toBe('primary')
+    expect(head.props.plain).toBeUndefined()
   })
 
   test('a pinned star is undimmed and an unpinned one dim', async ($, on) => {

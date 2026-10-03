@@ -7,7 +7,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ### Changed
 
 - The band's `≣ menu` button (and hotkey `m`) toggles the menu: pressing it while the pane is open closes it. The label shows the state, `≣ menu ▾` open and `≣ menu ▸` closed, read from `$.ui.panes()` at each render and redrawn on `ui.close`, so closing with ×, Esc or a key is reflected. `/menu` still always opens or focuses it.
-- A section title is clickable: the chevron and the title are one plain button, so a press anywhere on `▾ title` (or Enter on it) folds or unfolds the section. A button label takes no colour, so the title is no longer bold cyan; counts and `built-in` stay dim.
+- A section title is clickable: the chevron and the title are one button in the accent colour, `[ ▾ title ]`, so a press anywhere on it (or Enter) folds or unfolds the section; counts and `built-in` stay dim.
 
 ### Fixed
 

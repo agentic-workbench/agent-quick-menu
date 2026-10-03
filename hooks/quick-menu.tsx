@@ -994,7 +994,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
         <Button
           key={`fold:${b.id}`}
           label={`${isOpen ? '▾' : '▸'} ${b.title}`}
-          plain
+          variant="primary"
           onPress={() => void toggleFold($, b.id)}
         />
         {b.isBuiltIn && <Text dimColor>built-in</Text>}
