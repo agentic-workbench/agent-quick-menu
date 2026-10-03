@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="The quick menu pane: sections per plugin with command buttons, their slash commands and descriptions, and settings with on/off toggles" width="900">
+  <img src="docs/screenshot.png" alt="The quick menu pane: foldable sections per plugin with command buttons, their slash commands and descriptions, and Claude Code's own settings with toggles and choices" width="900">
 </p>
 
 ## Highlights
