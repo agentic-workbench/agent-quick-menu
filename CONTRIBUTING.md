@@ -16,7 +16,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat(menu): .
 make check
 ```
 
-This runs `claude plugin validate .` and `claude plugin test .` when `claude` is on PATH, and `tsc --noEmit` when `tsc` is on PATH. Each is skipped where absent, so install both before sending a PR. CI only checks the JSON files (`node scripts/check-json.mjs`), because `claude` is not available there.
+This runs `node scripts/check-json.mjs`, then `claude plugin validate .` and `claude plugin test .` when `claude` is on PATH, then `tsc --noEmit` with `tsc` from PATH or else TypeScript 5 through `npx`. The claude checks are skipped without `claude`, and tsc is skipped, with a message, until the API types exist (see below), so install `claude` before sending a PR. CI only runs `node scripts/check-json.mjs`, because `claude` is not available there.
 
 ## Running the mod
 
@@ -26,7 +26,7 @@ claude --plugin-dir .
 
 Run `/reload-plugins` in a running session after an edit.
 
-`tsc` needs the plugin API types in `.claude-plugin/types/`, which is gitignored. Claude Code lays them there when it loads the plugin, so run `claude --plugin-dir .` once in a fresh checkout before `tsc` or `make check`.
+`tsc` needs the plugin API types in `.claude-plugin/types/`, which is gitignored. Claude Code lays them there when it loads the plugin, so run `claude --plugin-dir .` once in a fresh checkout; until then `make check` skips tsc with a message.
 
 ## Tests
 

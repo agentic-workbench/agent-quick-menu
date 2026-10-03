@@ -66,7 +66,7 @@ const MAX_FAVOURITES = 50
 const MAX_SHOWN_COMMANDS = 30
 const MAX_PROBLEM = 300
 const CONFIRM_MS = 5000
-const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200 } as const
+const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200, setting: 64 } as const
 /** Control, line, bidi and zero-width characters: never shown, never accepted. */
 const BAD_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u
 const BAD_CHARS_ALL = new RegExp(BAD_CHARS.source, 'gu')
@@ -93,7 +93,7 @@ type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** Why `value` is not an acceptable menu string, or null. A lone `label` or `command` must hold more than blanks. */
+/** Why `value` is not an acceptable menu string, or null. A lone `title`, `label` or `command` must hold more than blanks. */
 function textError(where: string, value: unknown, max: number, nonBlank = false): string | null {
   if (typeof value !== 'string') return `${where} must be a ${nonBlank ? 'non-empty ' : ''}string`
   if (nonBlank && value.trim() === '') return `${where} must be a non-empty string`
@@ -124,7 +124,7 @@ export function validateMenuFile(json: unknown, reserved: readonly string[] = []
     return { ok: false, error: `unsupported version ${clean(String(JSON.stringify(json.version)), MAX_VERSION_TEXT)} (expected 1)` }
   }
   if (json.title !== undefined) {
-    const bad = textError('title', json.title, LIMITS.title)
+    const bad = textError('title', json.title, LIMITS.title, true)
     if (bad) return { ok: false, error: bad }
     if ([...RESERVED_TITLES, ...reserved].includes((json.title as string).trim().toLowerCase())) {
       return { ok: false, error: 'title is reserved (Claude Code, Favourites, built-in or another plugin)' }
@@ -143,10 +143,12 @@ export function validateMenuFile(json: unknown, reserved: readonly string[] = []
   }
   let settings: string[] | null = null
   if (json.settings !== undefined) {
-    if (!Array.isArray(json.settings) || json.settings.some(s => typeof s !== 'string' || s === '')) {
-      return { ok: false, error: 'settings must be an array of non-empty strings' }
-    }
+    if (!Array.isArray(json.settings)) return { ok: false, error: 'settings must be an array of non-empty strings' }
     if (json.settings.length > MAX_SETTINGS) return { ok: false, error: `settings has more than ${MAX_SETTINGS} entries` }
+    for (const [i, name] of json.settings.entries()) {
+      const bad = name === '' ? `settings[${i}] must be a non-empty string` : textError(`settings[${i}]`, name, LIMITS.setting)
+      if (bad) return { ok: false, error: bad }
+    }
     settings = [...(json.settings as string[])]
   }
   return { ok: true, value: { version: 1, title: json.title as string | undefined, commands, settings } }

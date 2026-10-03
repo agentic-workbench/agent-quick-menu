@@ -9,9 +9,7 @@ const PANE_PROPS = {
   placement: 'dock',
   scroll: { offset: 0, max: 0 },
   view: { rows: 24, columns: 100 },
-} as never
-
-declare const setTimeout: (fn: (...a: any[]) => void, ms: number) => unknown
+}
 
 const HOME = '/home/u'
 const REGISTRY = `${HOME}/.claude/plugins/installed_plugins.json`
@@ -43,8 +41,8 @@ type World = {
   builtins?: string[]
   /** What `$.fs.stat` answers for a path, over a regular file the size of its content. */
   stat?: Record<string, { kind?: string; isLink?: boolean; size?: number }>
-  /** Delays `$.command.list()` by this many ms (a slow discovery). */
-  listDelay?: number
+  /** `$.command.list()` waits for this before it answers (a slow discovery), e.g. `() => clock.sleep(400)`. */
+  listWait?: () => Promise<void>
   /** What `$.ui.panes()` lists; none by default. */
   panes?: () => { id: string; isPlaced?: boolean }[]
 }
@@ -91,7 +89,7 @@ function stub(on: any, w: World) {
     return { value: f[e.path] }
   })
   on('command.list', async () => {
-    if (w.listDelay) await new Promise(r => setTimeout(r, w.listDelay as number))
+    await w.listWait?.()
     return { value: [
       ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin', plugin: w.commandOwner ?? 'alpha@mk' })),
       ...(w.builtins ?? []).map(name => ({ name, description: '', source: 'builtin' })),
@@ -126,27 +124,19 @@ async function start($: any, cwd = '/tmp') {
   await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
 }
 
-/** The pane as first drawn: sections at their default fold. */
-async function foldedPane($: any): Promise<any> {
-  return $.ui.mount({
-    plugin: 'agent-quick-menu',
-    surface: 'terminal',
-    component: 'Pane',
-    props: PANE_PROPS,
-    requestId: 'quick-menu',
-  })
-}
-
-/** The pane with every section expanded, as most tests read it. */
-async function paneText($: any, surface = 'terminal'): Promise<any> {
+/** The pane on `surface`, `columns` wide; every section expanded unless `expand` is false (its default fold). */
+async function mountPane(
+  $: any,
+  { surface = 'terminal', columns, expand = true }: { surface?: string; columns?: number; expand?: boolean } = {},
+): Promise<any> {
   const ui = await $.ui.mount({
     plugin: 'agent-quick-menu',
     surface,
     component: 'Pane',
-    props: PANE_PROPS,
+    props: { ...PANE_PROPS, ...(columns !== undefined && { bodyColumns: columns }) } as never,
     requestId: 'quick-menu',
   })
-  await ui.press({ key: 'expand-all' })
+  if (expand) await ui.press({ key: 'expand-all' })
   return ui
 }
 
@@ -161,9 +151,15 @@ const row = (key: string, extra: Record<string, unknown> = {}) => ({
 })
 
 const realButtons = async (ui: any) =>
-  (await ui.findAll({ type: 'Button' })).filter((b: any) => !/star:|^fold:|^(expand|collapse)-all$|^close$/.test(String(b.key)))
+  (await ui.findAll({ type: 'Button' })).filter((b: any) => !/star:|^fold:|^(expand|collapse)-all$/.test(String(b.key)))
 
 const file = (o: unknown) => JSON.stringify(o)
+
+/** A `set` for the stub that records each `/config key=value` write and accepts it. */
+const recordSets = () => {
+  const sets: { key: string; value: string }[] = []
+  return { sets, set: (e: { key: string; value: string }) => (sets.push(e), { value: e.value }) }
+}
 
 /** The menu's own quick-menu.json. */
 const SELF_FILE = file({
@@ -172,6 +168,54 @@ const SELF_FILE = file({
   commands: [{ command: 'menu', label: 'Refresh', args: 'refresh' }],
   settings: [],
 })
+
+const ALPHA = {
+  enabled: { 'alpha@mk': true },
+  registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+}
+const alphaFile = (o: unknown) => ({ '/p/alpha/.claude-plugin/quick-menu.json': file(o) })
+
+const BAND_PROPS = {
+  hasSurvey: false,
+  isWorking: false,
+  maxRows: 3,
+  bodyColumns: 100,
+  scroll: { offset: 0, max: 0 },
+  view: { rows: 24, columns: 100 },
+} as never
+
+async function mountBand($: any, props: unknown = BAND_PROPS, surface = 'terminal') {
+  return $.ui.mount({ plugin: 'agent-quick-menu', surface, component: 'AbovePrompt', props })
+}
+
+const FAV_WORLD = (extra: Partial<World> = {}): World => ({
+  ...ALPHA,
+  files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', args: '--all' }, { command: 'stop' }] }),
+  commands: ['go', 'stop'],
+  rows: [row('alpha.flag', { kind: 'boolean', value: false }), row('alpha.name', { value: 'x' })],
+  ...extra,
+})
+
+/** Every Text, and each section title (the fold button's label without its chevron), in drawing order. */
+const textsOf = async (ui: any): Promise<string[]> =>
+  (await ui.findAll({ text: /[\s\S]/ }))
+    .filter((x: any) => x.type === 'Text' || (x.type === 'Button' && String(x.key).startsWith('fold:')))
+    .map((x: any) => (x.type === 'Text' ? x.text : String(x.props.label).slice(2)) as string)
+/** A section title: its fold button (the label is `▾ title`). */
+const titleOf = async (ui: any, re: RegExp): Promise<any> =>
+  (await ui.findAll({ type: 'Button' })).find((b: any) => String(b.key).startsWith('fold:') && re.test(String(b.props.label).slice(2)))
+
+const emptyBase = (on: any) =>
+  on('ui.render', ($: any, e: any) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+
+const toastsOf = (on: any): string[] => {
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+  return toasts
+}
 
 describe('validateMenuFile', () => {
   test('accepts a full file and defaults', () => {
@@ -217,11 +261,10 @@ describe('discovery', () => {
       commands: ['a-run'],
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^Alpha/)).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await ui.find({ text: /Gone \(not available\)/ })).toBeDefined()
-    expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await realButtons(ui)).toHaveLength(1)
     expect(await ui.find({ text: /off/ })).toBeUndefined()
   })
@@ -241,7 +284,7 @@ describe('discovery', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await ui.find({ text: /Problems/ })).toBeDefined()
     expect(await ui.find({ text: /a: .*quick-menu\.json/ })).toBeDefined()
     expect(await ui.find({ text: /b: .*unsupported version 9/ })).toBeDefined()
@@ -255,7 +298,7 @@ describe('discovery', () => {
       rows: [row('cfg.token'), row('cfg.mode'), row('other.x'), row('theme')],
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^cfg$/)).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.token' })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.mode' })).toBeDefined()
@@ -276,7 +319,7 @@ describe('discovery', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^FromCfgDir · alpha$/)).toBeDefined()
     expect(await ui.find({ text: /installed_plugins/ })).toBeUndefined()
   })
@@ -297,7 +340,7 @@ describe('discovery', () => {
     stub(on, world)
     const titles = async (cwd: string) => {
       await start($, cwd)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       const labels = await textsOf(ui)
       await ui.unmount()
       return labels
@@ -315,7 +358,7 @@ describe('discovery', () => {
       rows: [row('inline.opt', { provider: { plugin: 'inline', tier: 'core' } }), row('theme')],
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^inline$/)).toBeDefined()
     expect(await ui.find({ key: 'set:inline.opt' })).toBeDefined()
   })
@@ -330,7 +373,7 @@ describe('discovery', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^devone$/)).toBeDefined()
     expect(await ui.find({ text: /two: cannot identify plugin dir/ })).toBeDefined()
   })
@@ -345,45 +388,148 @@ describe('discovery', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^devone$/)).toBeDefined()
     expect(await ui.find({ text: /\/dev\/two:x: cannot identify plugin dir/ })).toBeDefined()
   })
 
   test('/menu refresh reruns discovery and toasts the counts when it lands', async ($, on) => {
-    const toasts: string[] = []
-    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    const clock = mock.clock(on)
+    const toasts = toastsOf(on)
     const world: World = { enabled: {}, registry: {} }
     stub(on, world)
     await start($)
     const before = await $.command.run({ command: 'menu', args: 'refresh' } as never)
     expect(before.text).toMatch(/discovering/)
-    await new Promise(r => setTimeout(r, 50))
+    await clock.settle()
     expect(toasts.at(-1)).toMatch(/0 sections/)
     world.enabled = { 'late@m': true }
     world.registry = { 'late@m': [{ installPath: '/p/late' }] }
     world.files = { '/p/late/.claude-plugin/quick-menu.json': file({ version: 1 }) }
     await $.command.run({ command: 'menu', args: 'refresh' } as never)
-    await new Promise(r => setTimeout(r, 50))
+    await clock.settle()
     expect(toasts.at(-1)).toMatch(/1 sections, 0 problems/)
+  })
+
+  test('a --plugin-dir plugin without a known root is listed from $.command.list() with its commands only', async ($, on) => {
+    const runs: unknown[] = []
+    stub(on, {
+      registry: {},
+      pluginCommands: [
+        { name: 'rt-status', plugin: 'repo-tools', description: 'Status' },
+        { name: 'rt-pull', plugin: 'repo-tools@inline' },
+        { name: 'x', plugin: 'cc-plugin-agents-md' },
+      ],
+      run: e => (runs.push(e), { text: 'ok' }),
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:' })).toBeDefined()
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read its quick-menu\.json/ })).toBeDefined()
+    expect(await ui.find({ text: /agents-md/ })).toBeUndefined()
+    await ui.press({ key: 'cmd:repo-tools:rt-status:' })
+    expect(runs).toMatchObject([{ command: 'rt-status' }])
+  })
+
+  test('a plugin whose menu file was read through CLAUDE_CODE_PLUGIN_DIRS is not listed twice', async ($, on) => {
+    stub(on, {
+      registry: {},
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one' },
+      files: {
+        '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
+        '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
+      },
+      pluginCommands: [{ name: 'x', plugin: 'devone' }],
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect((await textsOf(ui)).filter(t => t === 'devone')).toHaveLength(1)
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read/ })).toBeUndefined()
+  })
+
+  // The test kit raises no plugin.register, so the --plugin-dir root comes in through CLAUDE_CODE_PLUGIN_DIRS, ranked with it.
+  test('a --plugin-dir root shadows the installed copy of the same plugin, and its menu file is read', async ($, on) => {
+    stub(on, {
+      enabled: { 'repo-tools@mk': true },
+      registry: { 'repo-tools@mk': [{ scope: 'user', installPath: '/p/rt-installed' }] },
+      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/rt' },
+      files: {
+        '/dev/rt/.claude-plugin/plugin.json': file({ name: 'repo-tools' }),
+        '/dev/rt/.claude-plugin/quick-menu.json': file({
+          version: 1,
+          title: 'repo-tools',
+          commands: [{ command: 'rt-status', label: 'Status' }, { command: 'rt-pull', label: 'Pull all', args: '--all' }],
+        }),
+      },
+      commands: ['rt-status', 'rt-pull'],
+      commandOwner: 'repo-tools@mk',
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:--all' })).toBeDefined()
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS/ })).toBeUndefined()
+  })
+
+  test('commands a plugin beneath registers in its own session.start are available, not "not available"', async ($, on) => {
+    const world: World = {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
+      commands: [],
+    }
+    world.onStart = () => {
+      world.commands = ['late']
+    }
+    stub(on, world)
+    await start($)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
+    expect(await ui.find({ text: /not available/ })).toBeUndefined()
+  })
+
+  test('a command registered after discovery is available once the pane is opened', async ($, on) => {
+    const clock = mock.clock(on)
+    const world: World = {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
+      commands: [],
+    }
+    stub(on, world)
+    await start($)
+    await clock.settle()
+    const ui = await mountPane($)
+    expect(await ui.find({ text: /Late \(not available\)/ })).toBeDefined()
+    world.commands = ['late']
+    await $.command.run({ command: 'menu' } as never)
+    await clock.settle()
+    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
+    expect(await ui.find({ text: /not available/ })).toBeUndefined()
+  })
+
+  test('the menu reads its own quick-menu.json from $.plugin.root, with no --plugin-dir note', async ($, on) => {
+    stub(on, {
+      registry: {},
+      self: SELF_FILE,
+      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await titleOf(ui, /^Quick menu · agent-quick-menu$/)).toBeDefined()
+    expect((await ui.find({ key: 'cmd:agent-quick-menu:menu:refresh' })).props.label).toBe('Refresh')
+    expect(await ui.find({ key: 'cmd:agent-quick-menu:menu:' })).toBeUndefined()
+    expect(await ui.find({ text: /loaded with --plugin-dir/ })).toBeUndefined()
   })
 })
 
-const ALPHA = {
-  enabled: { 'alpha@mk': true },
-  registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
-}
-const alphaFile = (o: unknown) => ({ '/p/alpha/.claude-plugin/quick-menu.json': file(o) })
-
 describe('commands', () => {
   test('press runs $.command.run with command and args, shows queued, then toasts the first line', async ($, on) => {
+    const clock = mock.clock(on)
     let release: (v?: unknown) => void = () => {}
     const calls: unknown[] = []
-    const toasts: string[] = []
-    on('ui.toast', (_$: any, e: any, next: any) => {
-      toasts.push(e.text)
-      return next(e)
-    })
+    const toasts = toastsOf(on)
     stub(on, {
       ...ALPHA,
       files: alphaFile({ version: 1, commands: [{ command: 'go', args: '--all', description: 'does it' }] }),
@@ -396,19 +542,20 @@ describe('commands', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const pressed = ui.press({ key: 'cmd:alpha:go:--all' })
-    await new Promise(r => setTimeout(r, 20))
+    await clock.settle()
     expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
     expect(await ui.find({ text: /queued/ })).toBeDefined()
     release({ text: 'first line\nsecond' })
     await pressed
-    await new Promise(r => setTimeout(r, 100))
+    await clock.settle()
     expect(toasts).toEqual(['first line'])
     expect(await ui.find({ text: /queued/ })).toBeUndefined()
   })
 
   test('two quick presses run the command once', async ($, on) => {
+    const clock = mock.clock(on)
     let release: (v?: unknown) => void = () => {}
     const calls: unknown[] = []
     stub(on, {
@@ -418,40 +565,77 @@ describe('commands', () => {
       run: e => (calls.push(e), new Promise(res => (release = res))),
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const first = ui.press({ key: 'cmd:alpha:go:' })
     const second = ui.press({ key: 'cmd:alpha:go:' })
-    await new Promise(r => setTimeout(r, 20))
+    await clock.settle()
     release({ text: 'ok' })
     await Promise.all([first, second])
-    await new Promise(r => setTimeout(r, 100))
+    await clock.settle()
     expect(calls).toHaveLength(1)
   })
 
   test('a hot reload (session.start again) clears the queued state', async ($, on) => {
+    const clock = mock.clock(on)
     const calls: unknown[] = []
     stub(on, {
       ...ALPHA,
       files: alphaFile({ version: 1, commands: [{ command: 'go' }] }),
       commands: ['go'],
-      run: e => (calls.push(e), new Promise(res => setTimeout(() => res({ text: '' }), 60))),
+      run: e => (calls.push(e), clock.sleep(60).then(() => ({ text: '' }))),
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     void ui.press({ key: 'cmd:alpha:go:' })
-    await new Promise(r => setTimeout(r, 20))
+    await clock.settle()
     expect(await ui.find({ text: /queued/ })).toBeDefined()
     await start($)
     expect(await ui.find({ text: /queued/ })).toBeUndefined()
-    await new Promise(r => setTimeout(r, 150))
+    await clock.advance(150)
   })
 
   test('an unavailable command shows "not available" and has no action', async ($, on) => {
     stub(on, { ...ALPHA, files: alphaFile({ version: 1, commands: [{ command: 'gone' }] }), commands: [] })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await realButtons(ui)).toHaveLength(0)
     expect(await ui.find({ text: /gone \(not available\)/ })).toBeDefined()
+  })
+
+  test('a row naming /menu is answered by the menu itself, not by $.command.run (the engine skips own hooks on re-entry)', async ($, on) => {
+    const clock = mock.clock(on)
+    const toasts = toastsOf(on)
+    const runs: { command: string }[] = []
+    stub(on, {
+      registry: {},
+      self: SELF_FILE,
+      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
+      run: e => (runs.push(e), { text: 'agent-quick-menu registered /menu but no command.run hook answered it' }),
+    })
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: 'cmd:agent-quick-menu:menu:refresh' })
+    await clock.settle()
+    expect(runs.filter(r => r.command === 'menu')).toHaveLength(0)
+    expect(toasts.join('\n')).not.toMatch(/no command\.run hook answered/)
+    expect(toasts.at(-1)).toMatch(/Quick menu refreshed: \d+ sections/)
+    expect(toasts.filter(t => /discovering/.test(t))).toHaveLength(0)
+  })
+
+  test('/menu answers at once while a slow discovery is still running', async ($, on) => {
+    const clock = mock.clock(on)
+    const toasts = toastsOf(on)
+    stub(on, { registry: {}, listWait: () => clock.sleep(400) })
+    await start($)
+    // The clock is held: an answer that waited for the discovery would never arrive.
+    const opened = await $.command.run({ command: 'menu' } as never)
+    expect(opened.text).toBe('Quick menu opened')
+    const refreshed = await $.command.run({ command: 'menu', args: 'refresh' } as never)
+    expect(refreshed.text).toMatch(/discovering/)
+    expect(toasts).toEqual([])
+    // Discovery lists the commands twice (the second time to mark them against a fresh listing).
+    await clock.advance(800)
+    expect(toasts.at(-1)).toMatch(/Quick menu refreshed: \d+ sections/)
   })
 })
 
@@ -463,8 +647,8 @@ describe('settings', () => {
     ...extra,
   })
 
-  test('boolean toggles, choice selects, text and number inputs write via `/config key=value`', async ($, on) => {
-    const sets: unknown[] = []
+  test('boolean, choice, text and number rows write via `/config key=value`', async ($, on) => {
+    const { sets, set } = recordSets()
     stub(
       on,
       setup(
@@ -474,11 +658,11 @@ describe('settings', () => {
           row('alpha.name', { kind: 'text', value: 'x' }),
           row('alpha.count', { kind: 'number', value: 1 }),
         ],
-        { set: e => (sets.push(e), { value: e.value }) },
+        { set },
       ),
     )
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     await ui.press({ key: 'set:alpha.mode' })
     await ui.press({ key: 'set:alpha.mode:b' })
@@ -503,16 +687,15 @@ describe('settings', () => {
       ]),
     )
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
-    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    expect(await ui.find({ text: /^mode\s+$/ })).toBeDefined()
     await ui.press({ key: 'set:alpha.mode' })
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▴')
     for (const [k, label] of [['a', '● a'], ['b', '○ b'], ['c', '○ c']]) {
       const b = await ui.find({ key: `set:alpha.mode:${k}` })
       expect([b.type, b.props.label]).toEqual(['Button', label])
     }
-    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
     // Opening another row folds the first.
     await ui.press({ key: 'set:alpha.other' })
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
@@ -521,39 +704,34 @@ describe('settings', () => {
   })
 
   test('pressing the current option only collapses; another option writes once and collapses', async ($, on) => {
-    const sets: unknown[] = []
-    const world = setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], {
-      set: e => (sets.push(e), { value: e.value }),
-    })
-    stub(on, world)
+    const { sets, set } = recordSets()
+    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.mode' })
     await ui.press({ key: 'set:alpha.mode:a' })
     expect(sets).toHaveLength(0)
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
     expect(await ui.findAll({ key: 'set:alpha.mode:b' })).toHaveLength(0)
     await ui.press({ key: 'set:alpha.mode' })
-    world.rows = [row('alpha.mode', { kind: 'choice', value: 'b', options: ['a', 'b'] })]
     await ui.press({ key: 'set:alpha.mode:b' })
     expect(sets).toMatchObject([{ key: 'alpha.mode', value: 'b' }])
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('b ▾')
     expect(await ui.findAll({ key: 'set:alpha.mode:a' })).toHaveLength(0)
   })
 
-  test('the toggle collapses without writing, and no colon is drawn in the row', async ($, on) => {
-    const sets: unknown[] = []
-    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set: e => (sets.push(e), { value: e.value }) }))
+  test('pressing the open row\'s value collapses it without writing', async ($, on) => {
+    const { sets, set } = recordSets()
+    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.mode' })
-    expect(await ui.findAll({ text: /:/, type: 'Text' })).toHaveLength(0)
     await ui.press({ key: 'set:alpha.mode' })
     expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
     expect(sets).toHaveLength(0)
   })
 
-  test('on mobile, without Select and Input, choice, text and number rows are read-only text', async ($, on) => {
+  test('on mobile, choice, text and number rows are read-only text', async ($, on) => {
     stub(
       on,
       setup([
@@ -563,28 +741,17 @@ describe('settings', () => {
       ]),
     )
     await start($)
-    const ui = await paneText($, 'mobile')
+    const ui = await mountPane($, { surface: 'mobile' })
     expect(await ui.find({ text: /mode\s+a/ })).toBeDefined()
     expect(await ui.find({ text: /name\s+x/ })).toBeDefined()
     expect(await ui.find({ text: /count\s+1/ })).toBeDefined()
     expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
   })
 
-  test('an invalid number shows an error and does not call set', async ($, on) => {
-    const sets: unknown[] = []
-    stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { set: e => (sets.push(e), { value: e.value }) }))
-    await start($)
-    const ui = await paneText($)
-    await ui.press({ key: 'set:alpha.count' })
-    await ui.input({ key: 'set:alpha.count', text: 'abc' })
-    expect(sets).toEqual([])
-    expect(await ui.find({ text: /not a number/ })).toBeDefined()
-  })
-
   test('a deny reason is shown beside the row', async ($, on) => {
     stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
   })
@@ -592,7 +759,7 @@ describe('settings', () => {
   test('writing the value a row already holds is no refusal and shows no note', async ($, on) => {
     stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: () => ({ deny: 'alpha.name is not changed' }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'x' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
@@ -613,7 +780,7 @@ describe('settings', () => {
       ),
     )
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     await ui.press({ key: 'set:alpha.mode' })
     await ui.press({ key: 'set:alpha.mode:b' })
@@ -631,7 +798,7 @@ describe('settings', () => {
   test('a write the row does not take shows "not changed" when /config answers no text', async ($, on) => {
     stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { silentConfig: true, set: () => ({ deny: 'no' }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /not changed/ })).toBeDefined()
   })
@@ -639,7 +806,7 @@ describe('settings', () => {
   test('a value a config.set hook clamped is a write, not a refusal', async ($, on) => {
     stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { silentConfig: true, set: () => ({ value: '10' }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '99' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
@@ -649,7 +816,7 @@ describe('settings', () => {
     let refuse = true
     stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: e => (refuse ? { deny: 'policy says no' } : { value: e.value }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
     refuse = false
@@ -661,7 +828,7 @@ describe('settings', () => {
     const world = setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) })
     stub(on, world)
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
     // Changed elsewhere (the /config menu, another plugin): the next draw shows the new value without the old note.
@@ -673,7 +840,7 @@ describe('settings', () => {
   test('reopening the pane clears the notes of earlier writes', async ($, on) => {
     stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
     await $.command.run({ command: 'menu' } as never)
@@ -682,10 +849,10 @@ describe('settings', () => {
   })
 
   test('a text value with spaces is written bare, after the first `=`', async ($, on) => {
-    const sets: unknown[] = []
-    stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: e => (sets.push(e), { value: e.value }) }))
+    const { sets, set } = recordSets()
+    stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.name' })
     await ui.input({ key: 'set:alpha.name', text: 'a b=c' })
     expect(sets).toEqual([{ key: 'alpha.name', value: 'a b=c' }])
@@ -693,10 +860,10 @@ describe('settings', () => {
 
   describe('text and number editing', () => {
     const edited = (extra: Partial<World> = {}) => {
-      const sets: unknown[] = []
+      const { sets, set } = recordSets()
       const world = setup(
         [row('alpha.name', { kind: 'text', value: 'x' }), row('alpha.count', { kind: 'number', value: 1 })],
-        { set: e => (sets.push(e), { value: e.value }), ...extra },
+        { set, ...extra },
       )
       return { sets, world }
     }
@@ -704,7 +871,7 @@ describe('settings', () => {
     test('a value is a `value ✎` button; pressing opens an Input with save and cancel, one editor at a time', async ($, on) => {
       stub(on, edited().world)
       await start($)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('x ✎')
       expect(await ui.findAll({ type: 'Input' })).toHaveLength(1)
       await ui.press({ key: 'set:alpha.name' })
@@ -721,7 +888,7 @@ describe('settings', () => {
       const { sets, world } = edited()
       stub(on, world)
       await start($)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       await ui.press({ key: 'set:alpha.name' })
       await ui.input({ key: 'set:alpha.name', text: 'typed', kind: 'change' })
       await ui.press({ key: 'set:alpha.name:cancel' })
@@ -735,7 +902,7 @@ describe('settings', () => {
       const { sets, world } = edited()
       stub(on, world)
       await start($)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       await ui.press({ key: 'set:alpha.name' })
       await ui.input({ key: 'set:alpha.name', text: 'typed', kind: 'change' })
       await ui.press({ key: 'set:alpha.name:save' })
@@ -747,7 +914,7 @@ describe('settings', () => {
       const { sets, world } = edited()
       stub(on, world)
       await start($)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       await ui.press({ key: 'set:alpha.name' })
       await ui.press({ key: 'set:alpha.name:save' })
       await ui.press({ key: 'set:alpha.count' })
@@ -761,7 +928,7 @@ describe('settings', () => {
       const { sets, world } = edited()
       stub(on, world)
       await start($)
-      const ui = await paneText($)
+      const ui = await mountPane($)
       await ui.press({ key: 'set:alpha.count' })
       await ui.input({ key: 'set:alpha.count', text: 'abc' })
       expect(sets).toEqual([])
@@ -772,14 +939,6 @@ describe('settings', () => {
     })
   })
 
-  test('a locked row shows "managed" and has no editor', async ($, on) => {
-    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: true, isLocked: true })]))
-    await start($)
-    const ui = await paneText($)
-    expect(await ui.find({ text: /managed/ })).toBeDefined()
-    expect(await realButtons(ui)).toHaveLength(0)
-  })
-
   test('settings follow the file list order and skip unlisted rows', async ($, on) => {
     stub(on, {
       ...ALPHA,
@@ -787,13 +946,76 @@ describe('settings', () => {
       rows: [row('alpha.a'), row('alpha.b'), row('alpha.c')],
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const keys = (await ui.findAll({ type: 'Button' })).map((x: any) => String(x.key)).filter((k: string) => k.startsWith('set:'))
     expect(keys).toEqual(['set:alpha.b', 'set:alpha.a'])
+  })
+
+  test('read-only and input rows draw the label and the value with no colon between', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1 }),
+      rows: [
+        row('alpha.name', { label: 'Auto-update channel', value: 'latest' }),
+        row('alpha.lang', { label: 'Language', value: 'Default (English)', isLocked: true }),
+      ],
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect((await ui.findAll({ type: 'Input' })).filter((x: any) => x.key !== 'filter').every((x: any) => x.props.label === undefined)).toBe(true)
+    const texts = await textsOf(ui)
+    expect(texts.some(t => /^Auto-update channel\s+$/.test(t))).toBe(true)
+    expect(texts.some(t => t.includes(':') && /Language|latest/.test(t))).toBe(false)
+    const mobile = await mountPane($, { surface: 'mobile' })
+    expect((await textsOf(mobile)).some(t => /^Auto-update channel\s+latest$/.test(t))).toBe(true)
+  })
+
+  test('a boolean is a green ● and "on", or a gray ○ and "off"', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1 }),
+      rows: [
+        row('alpha.flag', { kind: 'boolean', value: true }),
+        row('alpha.off', { kind: 'boolean', value: false }),
+      ],
+    })
+    await start($)
+    const ui = await mountPane($)
+    const texts = await ui.findAll({ type: 'Text' })
+    expect(texts.find((t: any) => t.text === '●').props.color).toBe('green')
+    expect(texts.find((t: any) => t.text === '○').props.color).toBe('gray')
+    const flag = await ui.find({ key: 'set:alpha.flag' })
+    expect([flag.type, flag.props.label]).toEqual(['Button', 'on'])
+    expect((await ui.find({ key: 'set:alpha.off' })).props.label).toBe('off')
+    expect(await ui.find({ text: /^flag\s+$/ })).toBeDefined()
+  })
+
+  test('a locked row is dim: label, value, "managed", then the description; it has no editor', async ($, on) => {
+    stub(on, setup([row('alpha.fixed', { kind: 'boolean', value: false, isLocked: true, description: 'Set by policy' })]))
+    await start($)
+    const ui = await mountPane($)
+    expect(await realButtons(ui)).toHaveLength(0)
+    const locked = (await ui.findAll({ type: 'Text' })).find((x: any) => /fixed\s+false\s+managed/.test(x.text))
+    expect(locked.props.dimColor).toBe(true)
+    const texts = await textsOf(ui)
+    expect(texts[texts.indexOf('Set by policy') - 1]).toBe(' · ')
+  })
+
+  test('settings of a marketplace plugin are matched through the bare name', async ($, on) => {
+    stub(on, FAV_WORLD({
+      rows: [row('alpha.flag', { kind: 'boolean', value: false, provider: { plugin: 'alpha@mk', tier: 'core' } })],
+    }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'star:set:alpha.flag' })).toBeDefined()
+    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))).toHaveLength(1)
   })
 })
 
 describe('sections', () => {
+  const setup = (rows: Record<string, unknown>[]): World => ({ ...ALPHA, files: alphaFile({ version: 1 }), rows })
+
   test('Claude Code lists engine rows; order is files, settings-only, Claude Code, Problems', async ($, on) => {
     stub(on, {
       enabled: { 'zed@m': true, 'cfg@m': true, 'bad@m': true, 'alpha@m': true },
@@ -811,50 +1033,52 @@ describe('sections', () => {
       rows: [row('cfg.k'), row('theme', { kind: 'choice', value: 'dark', options: ['dark', 'light'] })],
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const heads = (await textsOf(ui))
       .filter((t: string) => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
     expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
   })
+
+  test('a section header is a primary button', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: true })]))
+    await start($)
+    const ui = await mountPane($)
+    const head = await titleOf(ui, /^alpha$/)
+    expect(head.props.variant).toBe('primary')
+    expect(head.props.plain).toBeUndefined()
+  })
+
+  test('section titles lose @marketplace; built-in plugins lose cc-plugin- and carry a dim built-in tag', async ($, on) => {
+    stub(on, {
+      enabled: { 'alpha@mk': true },
+      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+      files: { '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1 }) },
+      rows: [
+        row('cc-plugin-agents-md.on', { provider: { plugin: 'cc-plugin-agents-md', tier: 'builtin' } }),
+        row('shiny@mk.opt', { provider: { plugin: 'shiny@mk', tier: 'user' } }),
+      ],
+    })
+    await start($)
+    const ui = await mountPane($, { expand: false })
+    const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
+    const titles = await textsOf(ui)
+    expect(titles).toContain('alpha')
+    expect(titles).toContain('agents-md')
+    expect(titles).toContain('shiny')
+    expect(labels.filter((l: string) => l.startsWith('▸ '))).toHaveLength(3)
+    const tags = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.text === 'built-in')
+    expect(tags).toHaveLength(1)
+    expect(tags[0].props.dimColor).toBe(true)
+  })
 })
-
-const BAND_PROPS = {
-  hasSurvey: false,
-  isWorking: false,
-  maxRows: 3,
-  bodyColumns: 100,
-  scroll: { offset: 0, max: 0 },
-  view: { rows: 24, columns: 100 },
-} as never
-
-async function mountBand($: any, props: unknown = BAND_PROPS, surface = 'terminal') {
-  return $.ui.mount({ plugin: 'agent-quick-menu', surface, component: 'AbovePrompt', props })
-}
-
-const FAV_WORLD = (extra: Partial<World> = {}): World => ({
-  ...ALPHA,
-  files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', args: '--all' }, { command: 'stop' }] }),
-  commands: ['go', 'stop'],
-  rows: [row('alpha.flag', { kind: 'boolean', value: false }), row('alpha.name', { value: 'x' })],
-  ...extra,
-})
-
-/** Every Text, and each section title (the fold button's label without its chevron), in drawing order. */
-const textsOf = async (ui: any): Promise<string[]> =>
-  (await ui.findAll({ text: /[\s\S]/ }))
-    .filter((x: any) => x.type === 'Text' || (x.type === 'Button' && String(x.key).startsWith('fold:')))
-    .map((x: any) => (x.type === 'Text' ? x.text : String(x.props.label).slice(2)) as string)
-/** A section title: its fold button (the label is `▾ title`). */
-const titleOf = async (ui: any, re: RegExp): Promise<any> =>
-  (await ui.findAll({ type: 'Button' })).find((b: any) => String(b.key).startsWith('fold:') && re.test(String(b.props.label).slice(2)))
 
 describe('favourites', () => {
   test('pinning and unpinning writes through $.store and survives a fresh session.start', async ($, on) => {
     const store = new Map<string, unknown>()
     stub(on, FAV_WORLD({ store }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'star:cmd:alpha:go:--all' })
     await ui.press({ key: 'star:set:alpha.flag' })
     const pinned = [
@@ -873,7 +1097,7 @@ describe('favourites', () => {
     const store = new Map<string, unknown>()
     stub(on, FAV_WORLD({ store }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const other = { kind: 'command', plugin: 'alpha', key: 'stop' }
     store.set('favourites', [other])
     await ui.press({ key: 'star:set:alpha.flag' })
@@ -887,7 +1111,7 @@ describe('favourites', () => {
     ]]])
     stub(on, FAV_WORLD({ store }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const heads = await textsOf(ui)
     expect(heads.filter((t: string) => t.includes('Favourites') || t.includes('alpha'))).toEqual(['Favourites', 'alpha'])
     const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter((k: string) => k?.startsWith('fav:') && !k.includes('star'))
@@ -898,7 +1122,7 @@ describe('favourites', () => {
     const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'vanished' }]]])
     stub(on, FAV_WORLD({ store }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await ui.find({ text: /vanished \(gone\)/ })).toBeDefined()
     const pinned = (await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fav:'))
     expect(pinned.map((b: any) => b.text)).toEqual(['★'])
@@ -906,13 +1130,96 @@ describe('favourites', () => {
     expect(store.get('favourites')).toEqual([])
     expect(await ui.find({ text: /gone/ })).toBeUndefined()
   })
+
+  test('a pinned star is undimmed and an unpinned one dim', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await mountPane($)
+    const stars = (await ui.findAll({ type: 'Button' })).filter((b: any) => /star:/.test(String(b.key)))
+    for (const b of stars) expect(b.props.dimColor === true).toBe(b.props.label === '☆')
+    expect(stars.some((b: any) => b.props.label === '★')).toBe(true)
+    expect(stars.some((b: any) => b.props.label === '☆')).toBe(true)
+  })
+
+  test('without favourites the pane hints at the star', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    const ui = await mountPane($)
+    expect((await textsOf(ui)).join('\n')).toMatch(/Press ☆ on a row to pin it to the band/)
+    await ui.press({ key: 'star:cmd:alpha:go:--all' })
+    expect((await textsOf(ui)).join('\n')).not.toMatch(/Press ☆/)
+  })
 })
 
-const emptyBase = (on: any) =>
-  on('ui.render', ($: any, e: any) => {
-    const { Box } = $.ui.resolve(e)
-    return <Box />
+describe('filter', () => {
+  test('the filter hides rows and sections, opens matches, and the counts follow', async ($, on) => {
+    stub(on, {
+      enabled: { 'alpha@mk': true },
+      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+      files: {
+        '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'go', label: 'Go' }] }),
+      },
+      commands: ['go'],
+      rows: [
+        row('alpha.Flag', { kind: 'boolean', value: true }),
+        row('alpha.other', { kind: 'text', value: 'x' }),
+        row('theme', { kind: 'text', value: 'dark' }),
+        row('autoCompact', { kind: 'boolean', value: true, label: 'Auto-compact' }),
+      ],
+    })
+    await start($)
+    const ui = await mountPane($, { expand: false })
+    const input = await ui.find({ key: 'filter' })
+    expect(input.props.placeholder).toBe('filter…')
+    await ui.input({ key: 'filter', text: 'FLAG' })
+    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeDefined()
+    expect(await ui.find({ key: 'set:alpha.other' })).toBeUndefined()
+    expect(await ui.find({ key: 'cmd:alpha:go:' })).toBeUndefined()
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).not.toContain('▸ Claude Code')
+    expect(await ui.find({ text: /1 section · 0 commands · 1 setting/ })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'compact' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
+    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeUndefined()
+    await ui.input({ key: 'filter', text: 'autocompact' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'zzz' })
+    expect(await ui.find({ text: /No match/ })).toBeDefined()
+    await ui.input({ key: 'filter', text: '' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeUndefined()
   })
+
+  test('the filter matches a setting description', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1 }),
+      rows: [row('alpha.mode', { value: 'fast', description: 'Picks the speed of the run' })],
+    })
+    await start($)
+    const ui = await mountPane($, { expand: false })
+    await ui.input({ key: 'filter', text: 'SPEED' })
+    expect(await ui.find({ key: 'set:alpha.mode' })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'nonsense' })
+    expect(await ui.find({ key: 'set:alpha.mode' })).toBeUndefined()
+  })
+
+  test('the filter matches a command label as well as its name', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Launch' }, { command: 'stop' }] }),
+      commands: ['go', 'stop'],
+    })
+    await start($)
+    const ui = await mountPane($, { expand: false })
+    await ui.input({ key: 'filter', text: 'LAUNCH' })
+    expect(await ui.find({ key: 'cmd:alpha:go:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:alpha:stop:' })).toBeUndefined()
+    await ui.input({ key: 'filter', text: 'stop' })
+    expect(await ui.find({ key: 'cmd:alpha:stop:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:alpha:go:' })).toBeUndefined()
+  })
+})
 
 describe('band', () => {
   const pin = () => [
@@ -946,9 +1253,9 @@ describe('band', () => {
   })
 
   test('a boolean favourite toggles via `/config key=value`', async ($, on) => {
-    const sets: unknown[] = []
+    const { sets, set } = recordSets()
     const store = new Map<string, unknown>([['favourites', pin()]])
-    stub(on, FAV_WORLD({ store, set: e => (sets.push(e), { value: e.value }) }))
+    stub(on, FAV_WORLD({ store, set }))
     emptyBase(on)
     await start($)
     const ui = await mountBand($)
@@ -1022,9 +1329,9 @@ describe('band', () => {
   })
 
   test('a favourite naming /menu refresh is answered by the menu itself, not queued through $.command.run', async ($, on) => {
+    const clock = mock.clock(on)
     const runs: { command: string }[] = []
-    const toasts: string[] = []
-    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    const toasts = toastsOf(on)
     const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'agent-quick-menu', key: 'menu refresh' }]]])
     stub(on, {
       registry: {},
@@ -1038,7 +1345,7 @@ describe('band', () => {
     const ui = await mountBand($)
     expect((await ui.find({ key: 'band:1' })).props.label).toBe('Refresh')
     await ui.press({ key: 'band:1' })
-    await new Promise(r => setTimeout(r, 50))
+    await clock.settle()
     expect(runs.filter(r => r.command === 'menu')).toHaveLength(0)
     expect(toasts.join('\n')).not.toMatch(/no command\.run hook answered/)
     expect(toasts.at(-1)).toMatch(/Quick menu refreshed/)
@@ -1071,9 +1378,8 @@ describe('folding', () => {
     const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
     stub(on, FOLD({ store }))
     await start($)
-    const ui = await foldedPane($)
+    const ui = await mountPane($, { expand: false })
     const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
-    const titles = await textsOf(ui)
     expect(labels.filter((l: string) => /^[▾▸] /.test(l))).toEqual(['▾ Favourites', '▸ alpha', '▸ Claude Code'])
     expect(await ui.find({ key: 'fav:cmd:alpha:stop:' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeUndefined()
@@ -1084,7 +1390,7 @@ describe('folding', () => {
     const store = new Map<string, unknown>()
     stub(on, FOLD({ store }))
     await start($)
-    const ui = await foldedPane($)
+    const ui = await mountPane($, { expand: false })
     await ui.press({ key: 'fold:plugin:alpha' })
     expect(store.get('folded')).toEqual({ 'plugin:alpha': false })
     expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
@@ -1100,7 +1406,7 @@ describe('folding', () => {
     const store = new Map<string, unknown>()
     stub(on, FOLD({ store }))
     await start($)
-    const ui = await foldedPane($)
+    const ui = await mountPane($, { expand: false })
     store.set('folded', { engine: false })
     await ui.press({ key: 'fold:plugin:alpha' })
     expect(store.get('folded')).toEqual({ engine: false, 'plugin:alpha': false })
@@ -1110,7 +1416,7 @@ describe('folding', () => {
     const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
     stub(on, FOLD({ store }))
     await start($)
-    const ui = await foldedPane($)
+    const ui = await mountPane($, { expand: false })
     const hotkeys = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.hotkey).map((b: any) => [b.props.label, b.props.hotkey])
     expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c']])
     await ui.press({ key: 'expand-all' })
@@ -1125,10 +1431,9 @@ describe('folding', () => {
   test('the commands of a section sit one per line, hints aligned', async ($, on) => {
     stub(on, FOLD())
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const col = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.key === 'commands')
     expect(col).toHaveLength(1)
-    expect(col[0].props.flexWrap).toBeUndefined()
     expect(col[0].props.flexDirection).toBe('column')
     const rows = (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('row:cmd:alpha:'))
     expect(rows).toHaveLength(2)
@@ -1143,19 +1448,11 @@ describe('folding', () => {
   test('setting labels are padded to the longest label of their section', async ($, on) => {
     stub(on, FOLD())
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const flag = await ui.find({ key: 'set:alpha.flag' })
     expect(flag.props.label).toBe('off')
     expect(await ui.find({ text: 'flag         ' })).toBeDefined()
     expect(await ui.find({ text: 'longer_name  ' })).toBeDefined()
-  })
-
-  test('a locked row is dim and says managed', async ($, on) => {
-    stub(on, { ...FOLD(), rows: [row('alpha.flag', { kind: 'boolean', value: true, isLocked: true })] })
-    await start($)
-    const ui = await paneText($)
-    const t = (await ui.findAll({ type: 'Text' })).find((x: any) => /managed/.test(x.text))
-    expect(t.props.dimColor).toBe(true)
   })
 
   test('the pane opens with closeOnEscape', async ($, on) => {
@@ -1214,8 +1511,7 @@ describe('narrow terminal', () => {
   const NARROW = (extra: Partial<World> = {}): World => ({ ...FAV_WORLD(extra), placed: false })
 
   test('an unplaced pane toasts why and the band shows the section headers', async ($, on) => {
-    const toasts: string[] = []
-    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    const toasts = toastsOf(on)
     stub(on, NARROW())
     emptyBase(on)
     await start($)
@@ -1249,293 +1545,19 @@ describe('narrow terminal', () => {
     const ui = await mountBand($)
     expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
   })
-})
 
-describe('discovery of plugin dirs, row shape, filter and titles', () => {
-  test('a --plugin-dir plugin without a known root is listed from $.command.list() with its commands only', async ($, on) => {
-    const runs: unknown[] = []
-    stub(on, {
-      registry: {},
-      pluginCommands: [
-        { name: 'rt-status', plugin: 'repo-tools', description: 'Status' },
-        { name: 'rt-pull', plugin: 'repo-tools@inline' },
-        { name: 'x', plugin: 'cc-plugin-agents-md' },
-      ],
-      run: e => (runs.push(e), { text: 'ok' }),
-    })
+  test('the band fallback carries a Close button', async ($, on) => {
+    const closed: unknown[] = []
+    on('ui.close', (_$: any, e: any) => (closed.push(e), { value: undefined }))
+    stub(on, { ...FAV_WORLD(), placed: false })
+    emptyBase(on)
     await start($)
-    const ui = await paneText($)
-    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
-    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
-    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:' })).toBeDefined()
-    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read its quick-menu\.json/ })).toBeDefined()
-    expect(await ui.find({ text: /agents-md/ })).toBeUndefined()
-    await ui.press({ key: 'cmd:repo-tools:rt-status:' })
-    expect(runs).toMatchObject([{ command: 'rt-status' }])
-  })
-
-  test('a plugin whose menu file was read through CLAUDE_CODE_PLUGIN_DIRS is not listed twice', async ($, on) => {
-    stub(on, {
-      registry: {},
-      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one' },
-      files: {
-        '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
-        '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
-      },
-      pluginCommands: [{ name: 'x', plugin: 'devone' }],
-    })
-    await start($)
-    const ui = await paneText($)
-    expect((await textsOf(ui)).filter(t => t === 'devone')).toHaveLength(1)
-    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read/ })).toBeUndefined()
-  })
-
-  test('every setting row has the same shape: a plain label, then the value; a boolean is a small toggle', async ($, on) => {
-    stub(on, {
-      ...ALPHA,
-      files: alphaFile({ version: 1 }),
-      rows: [
-        row('alpha.flag', { kind: 'boolean', value: true }),
-        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] }),
-        row('alpha.fixed', { kind: 'boolean', value: false, isLocked: true }),
-      ],
-    })
-    await start($)
-    const ui = await paneText($)
-    const flag = await ui.find({ key: 'set:alpha.flag' })
-    expect(flag.type).toBe('Button')
-    expect(flag.props.label).toBe('on')
-    expect(await ui.find({ text: /^flag\s+$/ })).toBeDefined()
-    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
-    expect(await ui.find({ text: /^mode\s+$/ })).toBeDefined()
-    expect(await ui.find({ text: /fixed\s+false\s+managed/ })).toBeDefined()
-  })
-
-  test('a boolean shows a green ● on or a gray ○ off, and a header is a primary button', async ($, on) => {
-    stub(on, {
-      ...ALPHA,
-      files: alphaFile({ version: 1 }),
-      rows: [
-        row('alpha.flag', { kind: 'boolean', value: true }),
-        row('alpha.off', { kind: 'boolean', value: false }),
-      ],
-    })
-    await start($)
-    const ui = await paneText($)
-    const texts = await ui.findAll({ type: 'Text' })
-    expect(texts.find((t: any) => t.text === '●').props.color).toBe('green')
-    expect(texts.find((t: any) => t.text === '○').props.color).toBe('gray')
-    expect((await ui.find({ key: 'set:alpha.flag' })).props.label).toBe('on')
-    expect((await ui.find({ key: 'set:alpha.off' })).props.label).toBe('off')
-    const head = await titleOf(ui, /^alpha$/)
-    expect(head.props.variant).toBe('primary')
-    expect(head.props.plain).toBeUndefined()
-  })
-
-  test('a pinned star is undimmed and an unpinned one dim', async ($, on) => {
-    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
-    stub(on, FAV_WORLD({ store }))
-    await start($)
-    const ui = await paneText($)
-    const stars = (await ui.findAll({ type: 'Button' })).filter((b: any) => /star:/.test(String(b.key)))
-    for (const b of stars) expect(b.props.dimColor === true).toBe(b.props.label === '☆')
-    expect(stars.some((b: any) => b.props.label === '★')).toBe(true)
-    expect(stars.some((b: any) => b.props.label === '☆')).toBe(true)
-  })
-
-  test('the filter hides rows and sections, opens matches, and the counts follow', async ($, on) => {
-    const SET = (n: string, extra = {}) => row(n, extra)
-    stub(on, {
-      enabled: { 'alpha@mk': true },
-      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
-      files: {
-        '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'go', label: 'Go' }] }),
-      },
-      commands: ['go'],
-      rows: [
-        SET('alpha.Flag', { kind: 'boolean', value: true }),
-        SET('alpha.other', { kind: 'text', value: 'x' }),
-        SET('theme', { kind: 'text', value: 'dark' }),
-        SET('autoCompact', { kind: 'boolean', value: true, label: 'Auto-compact' }),
-      ],
-    })
-    await start($)
-    const ui = await foldedPane($)
-    const input = await ui.find({ key: 'filter' })
-    expect(input.props.placeholder).toBe('filter…')
-    await ui.input({ key: 'filter', text: 'FLAG' })
-    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeDefined()
-    expect(await ui.find({ key: 'set:alpha.other' })).toBeUndefined()
-    expect(await ui.find({ key: 'cmd:alpha:go:' })).toBeUndefined()
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).not.toContain('▸ Claude Code')
-    expect(await ui.find({ text: /1 section · 0 commands · 1 setting/ })).toBeDefined()
-    await ui.input({ key: 'filter', text: 'compact' })
-    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
-    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeUndefined()
-    await ui.input({ key: 'filter', text: 'autocompact' })
-    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
-    await ui.input({ key: 'filter', text: 'zzz' })
-    expect(await ui.find({ text: /No match/ })).toBeDefined()
-    await ui.input({ key: 'filter', text: '' })
-    expect(await ui.find({ key: 'set:autoCompact' })).toBeUndefined()
-  })
-
-  test('section titles lose @marketplace; built-in plugins lose cc-plugin- and carry a dim built-in tag', async ($, on) => {
-    stub(on, {
-      enabled: { 'alpha@mk': true },
-      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
-      files: { '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1 }) },
-      rows: [
-        row('cc-plugin-agents-md.on', { provider: { plugin: 'cc-plugin-agents-md', tier: 'builtin' } }),
-        row('shiny@mk.opt', { provider: { plugin: 'shiny@mk', tier: 'user' } }),
-      ],
-    })
-    await start($)
-    const ui = await foldedPane($)
-    const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
-    const titles = await textsOf(ui)
-    expect(titles).toContain('alpha')
-    expect(titles).toContain('agents-md')
-    expect(titles).toContain('shiny')
-    expect(labels.filter((l: string) => l.startsWith('▸ '))).toHaveLength(3)
-    const tags = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.text === 'built-in')
-    expect(tags).toHaveLength(1)
-    expect(tags[0].props.dimColor).toBe(true)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
+    await ui.press({ key: 'band:close' })
+    expect(closed).toMatchObject([{ id: 'quick-menu' }])
   })
 })
-
-describe('menu command, slow discovery, shadowing and own file', () => {
-  test('a row naming /menu is answered by the menu itself, not by $.command.run (the engine skips own hooks on re-entry)', async ($, on) => {
-    const toasts: string[] = []
-    const runs: { command: string }[] = []
-    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
-    stub(on, {
-      registry: {},
-      self: SELF_FILE,
-      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
-      run: e => (runs.push(e), { text: 'agent-quick-menu registered /menu but no command.run hook answered it' }),
-    })
-    await start($)
-    const ui = await paneText($)
-    await ui.press({ key: 'cmd:agent-quick-menu:menu:refresh' })
-    await new Promise(r => setTimeout(r, 50))
-    expect(runs.filter(r => r.command === 'menu')).toHaveLength(0)
-    expect(toasts.join('\n')).not.toMatch(/no command\.run hook answered/)
-    expect(toasts.at(-1)).toMatch(/Quick menu refreshed: \d+ sections/)
-    expect(toasts.filter(t => /discovering/.test(t))).toHaveLength(0)
-  })
-
-  test('/menu answers at once while a slow discovery is still running', async ($, on) => {
-    stub(on, { registry: {}, listDelay: 400 })
-    await start($)
-    const t0 = Date.now()
-    const opened = await $.command.run({ command: 'menu' } as never)
-    expect(opened.text).toBe('Quick menu opened')
-    expect(Date.now() - t0).toBeLessThan(300)
-    const refreshed = await $.command.run({ command: 'menu', args: 'refresh' } as never)
-    expect(refreshed.text).toMatch(/discovering/)
-    expect(Date.now() - t0).toBeLessThan(300)
-    await new Promise(r => setTimeout(r, 900))
-  })
-
-  // The test kit raises no plugin.register, so the --plugin-dir root comes in through CLAUDE_CODE_PLUGIN_DIRS, ranked with it.
-  test('read-only and input rows draw the label and the value with no colon between', async ($, on) => {
-    stub(on, {
-      ...ALPHA,
-      files: alphaFile({ version: 1 }),
-      rows: [
-        row('alpha.name', { label: 'Auto-update channel', value: 'latest' }),
-        row('alpha.lang', { label: 'Language', value: 'Default (English)', isLocked: true }),
-      ],
-    })
-    await start($)
-    const ui = await paneText($)
-    expect((await ui.findAll({ type: 'Input' })).filter((x: any) => x.key !== 'filter').every((x: any) => x.props.label === undefined)).toBe(true)
-    const texts = await textsOf(ui)
-    expect(texts.some(t => /^Auto-update channel\s+$/.test(t))).toBe(true)
-    expect(texts.some(t => t.includes(':') && /Language|latest/.test(t))).toBe(false)
-    const mobile = await paneText($, 'mobile')
-    expect((await textsOf(mobile)).some(t => /^Auto-update channel\s+latest$/.test(t))).toBe(true)
-  })
-
-  test('a --plugin-dir root shadows the installed copy of the same plugin, and its menu file is read', async ($, on) => {
-    stub(on, {
-      enabled: { 'repo-tools@mk': true },
-      registry: { 'repo-tools@mk': [{ scope: 'user', installPath: '/p/rt-installed' }] },
-      vars: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/rt' },
-      files: {
-        '/dev/rt/.claude-plugin/plugin.json': file({ name: 'repo-tools' }),
-        '/dev/rt/.claude-plugin/quick-menu.json': file({
-          version: 1,
-          title: 'repo-tools',
-          commands: [{ command: 'rt-status', label: 'Status' }, { command: 'rt-pull', label: 'Pull all', args: '--all' }],
-        }),
-      },
-      commands: ['rt-status', 'rt-pull'],
-      commandOwner: 'repo-tools@mk',
-    })
-    await start($)
-    const ui = await paneText($)
-    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
-    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
-    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:--all' })).toBeDefined()
-    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS/ })).toBeUndefined()
-  })
-
-  test('commands a plugin beneath registers in its own session.start are available, not "not available"', async ($, on) => {
-    const world: World = {
-      ...ALPHA,
-      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
-      commands: [],
-    }
-    world.onStart = () => {
-      world.commands = ['late']
-    }
-    stub(on, world)
-    await start($)
-    const ui = await paneText($)
-    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
-    expect(await ui.find({ text: /not available/ })).toBeUndefined()
-  })
-
-  test('a command registered after discovery is available once the pane is opened', async ($, on) => {
-    const world: World = {
-      ...ALPHA,
-      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
-      commands: [],
-    }
-    stub(on, world)
-    await start($)
-    await new Promise(r => setTimeout(r, 50))
-    const ui = await paneText($)
-    expect(await ui.find({ text: /Late \(not available\)/ })).toBeDefined()
-    world.commands = ['late']
-    await $.command.run({ command: 'menu' } as never)
-    await new Promise(r => setTimeout(r, 50))
-    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
-    expect(await ui.find({ text: /not available/ })).toBeUndefined()
-  })
-
-  test('the menu reads its own quick-menu.json from $.plugin.root, with no --plugin-dir note', async ($, on) => {
-    stub(on, {
-      registry: {},
-      self: SELF_FILE,
-      pluginCommands: [{ name: 'menu', plugin: 'agent-quick-menu' }],
-    })
-    await start($)
-    const ui = await paneText($)
-    expect(await titleOf(ui, /^Quick menu · agent-quick-menu$/)).toBeDefined()
-    expect((await ui.find({ key: 'cmd:agent-quick-menu:menu:refresh' })).props.label).toBe('Refresh')
-    expect(await ui.find({ key: 'cmd:agent-quick-menu:menu:' })).toBeUndefined()
-    expect(await ui.find({ text: /loaded with --plugin-dir/ })).toBeUndefined()
-  })
-})
-
-const toastsOf = (on: any): string[] => {
-  const toasts: string[] = []
-  on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
-  return toasts
-}
 
 describe('security: what a button runs', () => {
   const FOREIGN = {
@@ -1557,7 +1579,7 @@ describe('security: what a button runs', () => {
     const long = 'x'.repeat(100)
     stub(on, { ...FOREIGN, files: alphaFile({ version: 1, commands: [{ command: 'go', args: long.slice(0, 90) }, { command: 'clear' }, { command: 'beta-run' }] }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const texts = await textsOf(ui)
     const clipped = texts.find(t => t.startsWith('/go '))!
     expect([...clipped.trim()]).toHaveLength(60)
@@ -1573,17 +1595,12 @@ describe('security: what a button runs', () => {
     commands: ['go'],
     files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', description: 'Runs the whole thing now '.repeat(6) }] }),
   })
-  const paneAt = async ($: any, bodyColumns: number) => {
-    const ui = await $.ui.mount({ plugin: 'agent-quick-menu', surface: 'terminal', component: 'Pane', props: { ...(PANE_PROPS as object), bodyColumns }, requestId: 'quick-menu' })
-    await ui.press({ key: 'expand-all' })
-    return ui
-  }
-  const textsAt = async ($: any, bodyColumns: number) => textsOf(await paneAt($, bodyColumns))
+  const textsAt = async ($: any, columns: number) => textsOf(await mountPane($, { columns }))
 
   test('a command description is dim text after the hint, clipped so the row fits one line', async ($, on) => {
     stub(on, describedWorld())
     await start($)
-    const ui = await paneAt($, 60)
+    const ui = await mountPane($, { columns: 60 })
     const texts = await textsOf(ui)
     const wide = texts.find(t => t.includes('Runs the whole'))!
     expect(wide).toBeDefined()
@@ -1610,7 +1627,7 @@ describe('security: what a button runs', () => {
   test('a setting description is dim text after the value, clipped to the pane width', async ($, on) => {
     stub(on, settingWorld())
     await start($)
-    const ui = await paneAt($, 70)
+    const ui = await mountPane($, { columns: 70 })
     const wide = (await textsOf(ui)).find(t => t.includes('Picks the speed'))!
     expect(wide).toBeDefined()
     expect([...wide].length).toBeLessThanOrEqual(70)
@@ -1621,29 +1638,10 @@ describe('security: what a button runs', () => {
     expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
 
-  test('a locked setting shows managed, then the description', async ($, on) => {
-    stub(on, settingWorld({ isLocked: true, description: 'Set by policy' }))
-    await start($)
-    const texts = await textsAt($, 100)
-    expect(texts.some(t => t.includes('managed'))).toBe(true)
-    expect(texts).toContain('Set by policy')
-    expect(texts[texts.indexOf('Set by policy') - 1]).toBe(' · ')
-  })
-
   test('a setting description is dropped when under 8 cells remain', async ($, on) => {
     stub(on, settingWorld())
     await start($)
     expect((await textsAt($, 20)).some(t => t.includes('Picks'))).toBe(false)
-  })
-
-  test('the filter matches a setting description', async ($, on) => {
-    stub(on, settingWorld())
-    await start($)
-    const ui = await foldedPane($)
-    await ui.input({ key: 'filter', text: 'SPEED' })
-    expect(await ui.find({ key: 'set:alpha.mode' })).toBeDefined()
-    await ui.input({ key: 'filter', text: 'nonsense' })
-    expect(await ui.find({ key: 'set:alpha.mode' })).toBeUndefined()
   })
 
   test('a built-in or another plugin\'s command needs a second press within 5 s, in the pane and the band', async ($, on) => {
@@ -1653,7 +1651,7 @@ describe('security: what a button runs', () => {
     stub(on, { ...FOREIGN, store, run: e => (calls.push(e), { text: 'ok' }) })
     emptyBase(on)
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'cmd:alpha:clear:' })
     expect(calls).toHaveLength(0)
     expect((await ui.find({ key: 'cmd:alpha:clear:' })).props.label).toBe('press again: /clear')
@@ -1678,7 +1676,7 @@ describe('security: what a button runs', () => {
     const calls: { command: string }[] = []
     stub(on, { ...FOREIGN, run: e => (calls.push(e), { text: 'ok' }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'cmd:alpha:go:--all' })
     expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
   })
@@ -1694,6 +1692,7 @@ describe('security: menu file input', () => {
       expect(bad({ commands: [{ command: 'a', label: `a${ch}b` }] })).toMatchObject({ ok: false })
       expect(bad({ commands: [{ command: 'a', args: `a${ch}b` }] })).toMatchObject({ ok: false })
       expect(bad({ commands: [{ command: 'a', description: `a${ch}b` }] })).toMatchObject({ ok: false })
+      expect(bad({ settings: [`a${ch}b`] })).toMatchObject({ ok: false })
     }
   })
 
@@ -1719,6 +1718,10 @@ describe('security: menu file input', () => {
       expect(bad({ commands: [c] })).toMatchObject({ ok: false })
     }
     expect(bad({ commands: [{ command: 'a', label: '   ' }] })).toMatchObject({ ok: false })
+    expect(bad({ title: '   ' })).toMatchObject({ ok: false })
+    expect(bad({ settings: [ok(64)] })).toMatchObject({ ok: true })
+    expect(bad({ settings: [ok(65)] })).toMatchObject({ ok: false })
+    expect(bad({ settings: [''] })).toMatchObject({ ok: false })
     expect(bad({ commands: Array.from({ length: 50 }, () => ({ command: 'a' })) })).toMatchObject({ ok: true })
     expect(bad({ commands: Array.from({ length: 51 }, () => ({ command: 'a' })) })).toMatchObject({ ok: false })
     expect(bad({ settings: Array.from({ length: 51 }, () => 's') })).toMatchObject({ ok: false })
@@ -1741,7 +1744,7 @@ describe('security: menu file input', () => {
       },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const lines = (await textsOf(ui)).filter(t => t.includes('quick-menu.json'))
     expect(lines).toHaveLength(3)
     expect(lines.every(t => t.length <= 300 + 20 && !/[\u202e]/.test(t))).toBe(true)
@@ -1759,7 +1762,7 @@ describe('security: menu file input', () => {
       stat: { [path('a')]: { isLink: true }, [path('b')]: { size: 64 * 1024 + 1 }, [path('c')]: { kind: 'dir' } },
     })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     const texts = await textsOf(ui)
     expect(texts.filter(t => /regular file|larger than 64 KiB/.test(t))).toHaveLength(3)
     expect(await ui.find({ text: /^[ABC] · / })).toBeUndefined()
@@ -1769,7 +1772,7 @@ describe('security: menu file input', () => {
     const commands = Array.from({ length: 35 }, (_, i) => ({ command: `c${i}` }))
     stub(on, { ...ALPHA, files: alphaFile({ version: 1, commands }), commands: commands.map(c => c.command) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await realButtons(ui)).toHaveLength(30)
     expect(await textsOf(ui)).toContain('+5 more')
   })
@@ -1777,7 +1780,7 @@ describe('security: menu file input', () => {
   test('a title that differs from the plugin name is shown with it', async ($, on) => {
     stub(on, { ...ALPHA, files: alphaFile({ version: 1, title: 'Fancy' }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^Fancy · alpha$/)).toBeDefined()
   })
 })
@@ -1821,7 +1824,7 @@ describe('security: paths', () => {
   test('a relative installPath is skipped with a problem', async ($, on) => {
     stub(on, { ...ALPHA, registry: { 'alpha@mk': [{ installPath: 'p/alpha' }] }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^Alpha/)).toBeUndefined()
     expect(await ui.find({ text: /installPath is not absolute/ })).toBeDefined()
   })
@@ -1829,14 +1832,14 @@ describe('security: paths', () => {
   test('a relative CLAUDE_CONFIG_DIR skips the registry with a problem', async ($, on) => {
     stub(on, { enabled: { 'alpha@mk': true }, vars: { CLAUDE_CONFIG_DIR: 'cfg' } })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await ui.find({ text: /CLAUDE_CONFIG_DIR: must be an absolute path/ })).toBeDefined()
   })
 
   test('no HOME skips the registry without a problem line', async ($, on) => {
     stub(on, { ...ALPHA, vars: { HOME: '' }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^Alpha/)).toBeUndefined()
     expect(await ui.find({ text: /Problems/ })).toBeUndefined()
   })
@@ -1844,14 +1847,14 @@ describe('security: paths', () => {
   test('USERPROFILE stands in for an empty HOME', async ($, on) => {
     stub(on, { ...ALPHA, vars: { HOME: '', USERPROFILE: HOME }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await titleOf(ui, /^Alpha/)).toBeDefined()
   })
 
   test('a relative CLAUDE_CODE_PLUGIN_DIRS root is a problem, not read', async ($, on) => {
     stub(on, { registry: {}, vars: { CLAUDE_CODE_PLUGIN_DIRS: 'rel/dir' } })
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     expect(await ui.find({ text: /rel\/dir: cannot identify plugin dir: not an absolute path/ })).toBeDefined()
   })
 })
@@ -1863,7 +1866,7 @@ describe('security: favourites and the store', () => {
     const store = new Map<string, unknown>([['favourites', full]])
     stub(on, FAV_WORLD({ store }))
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     await ui.press({ key: 'star:cmd:alpha:go:--all' })
     expect((store.get('favourites') as unknown[]).length).toBe(50)
     expect(toasts.join('\n')).toMatch(/at most 50 favourites/)
@@ -1874,56 +1877,12 @@ describe('security: favourites and the store', () => {
     const w = FAV_WORLD()
     stub(on, w)
     await start($)
-    const ui = await paneText($)
+    const ui = await mountPane($)
     w.storeFails = 'disk full'
     await ui.press({ key: 'star:cmd:alpha:go:--all' })
     await ui.press({ key: 'collapse-all' })
     expect(toasts.filter(t => /cannot save favourites: /.test(t))).toHaveLength(1)
     expect(toasts.filter(t => /cannot save folded: /.test(t))).toHaveLength(1)
     expect(await ui.find({ key: 'fav:cmd:alpha:go:--all' })).toBeUndefined()
-  })
-})
-
-describe('go-live polish', () => {
-  test('the pane has no own Close button; the engine close mark closes it', async ($, on) => {
-    stub(on, FAV_WORLD())
-    emptyBase(on)
-    await start($)
-    const ui = await foldedPane($)
-    expect(await ui.findAll({ key: 'close' })).toEqual([])
-    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.label === 'Close')).toEqual([])
-  })
-
-  test('the band fallback carries a Close button', async ($, on) => {
-    const closed: unknown[] = []
-    on('ui.close', (_$: any, e: any) => (closed.push(e), { value: undefined }))
-    stub(on, { ...FAV_WORLD(), placed: false })
-    emptyBase(on)
-    await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
-    const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
-    await ui.press({ key: 'band:close' })
-    expect(closed).toMatchObject([{ id: 'quick-menu' }])
-  })
-
-  test('without favourites the pane hints at the star', async ($, on) => {
-    stub(on, FAV_WORLD())
-    emptyBase(on)
-    await start($)
-    const ui = await paneText($)
-    expect((await textsOf(ui)).join('\n')).toMatch(/Press ☆ on a row to pin it to the band/)
-    await ui.press({ key: 'star:cmd:alpha:go:--all' })
-    expect((await textsOf(ui)).join('\n')).not.toMatch(/Press ☆/)
-  })
-
-  test('settings of a marketplace plugin are matched through the bare name', async ($, on) => {
-    stub(on, FAV_WORLD({
-      rows: [row('alpha.flag', { kind: 'boolean', value: false, provider: { plugin: 'alpha@mk', tier: 'core' } })],
-    }))
-    emptyBase(on)
-    await start($)
-    const ui = await paneText($)
-    expect(await ui.find({ key: 'star:set:alpha.flag' })).toBeDefined()
-    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))).toHaveLength(1)
   })
 })

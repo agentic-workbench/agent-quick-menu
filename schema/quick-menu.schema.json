@@ -8,7 +8,7 @@
   "properties": {
     "$schema": { "type": "string" },
     "version": { "const": 1, "description": "Schema version. An unknown version is skipped with a notice." },
-    "title": { "type": "string", "maxLength": 60, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Section heading; default the plugin name. Not Claude Code, Favourites, built-in or another plugin's name." },
+    "title": { "type": "string", "maxLength": 60, "pattern": "^(?=.*\\S)[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$", "description": "Section heading; default the plugin name. Not Claude Code, Favourites, built-in or another plugin's name." },
     "commands": {
       "type": "array",
       "maxItems": 50,
@@ -28,7 +28,7 @@
       "type": "array",
       "maxItems": 50,
       "description": "userConfig field names of this plugin, in display order. Omitted: all rows. []: none.",
-      "items": { "type": "string", "minLength": 1 }
+      "items": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Co}\\u{FE00}-\\u{FE0F}\\u{E0100}-\\u{E01EF}]*$" }
     }
   }
 }

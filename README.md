@@ -38,8 +38,8 @@ Then run `/reload-plugins` in a running session.
 - Band digits are opt-in: with the `bandHotkeys` setting on (default off) and an empty prompt, `1` to `9` press the pinned commands of this plugin only, numbered by their position in the pinned list (a gap keeps the other numbers). Other plugins' commands and setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
 - Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. The pane closes with Claude Code's own `×`, Escape or ctrl+x x. With no favourites yet, the pane says to press `☆` on a row.
-- The filter field at the top (`filter…`) matches setting labels and keys and command names, case-insensitive, across every section. Sections without a match are hidden, matching ones open while a filter is set, and the counts follow.
-- Every setting row is a plain label and a value: a boolean is a small `[ on ]` / `[ off ]` toggle, a choice keeps `value ▾`.
+- The filter field at the top (`filter…`) matches setting labels, keys and descriptions and command names and labels, case-insensitive, across every section. Sections without a match are hidden, matching ones open while a filter is set, and the counts follow.
+- Every setting row is a plain label and a value, and a press edits it: a boolean is a green `●` (on) or gray `○` (off) with the plain word `on` / `off`; a choice opens an inline row of option buttons (`● current`, `○ other`), one editor open at a time; text and number rows show `value ✎` and open an Input with `✓ save` and `✕ cancel`. Cancel is the button: Escape does not cancel the edit (it closes the pane). Commands and settings show a dim italic description after ` · `.
 - If the terminal is too narrow to place the pane, a toast says so and the band lists the sections (header buttons, at most as many rows as the band may take, and a `Close` button, since the engine draws no close mark there) instead.
 - `[-]` at the end of the band (drawn by Claude Code, or ctrl+x ctrl+a) folds the band.
 
@@ -54,11 +54,11 @@ Then run `/reload-plugins` in a running session.
 
 ## What this plugin does on your machine
 
-**Slash commands it runs, and when.** Only when you press a button or a band favourite, and only the command that row shows: `/<command> <args>` from a plugin's `quick-menu.json`. Built-in commands and other plugins' commands need a second press within 5 seconds. When you change a setting row it runs `/config <key>=<value>`. It runs nothing on its own.
+**Slash commands it runs, and when.** Only when you press a button or a band favourite, and only the command that row shows: `/<command> <args>` from a plugin's `quick-menu.json`. Built-in commands and other plugins' commands need a second press within 5 seconds. When you change a setting row it runs `/config <key>=<value>`, then reads the row back through `$.config.list()` to judge whether the write took. It runs nothing on its own.
 
 **What it sets.** Only the `/config` rows you change in the pane. It sets no environment variables. It keeps favourites and folded sections in Claude Code's plugin store.
 
-**What it reads.** Your settings (`enabledPlugins`), the plugin registry `installed_plugins.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, and each plugin's `.claude-plugin/quick-menu.json`. It sends nothing over the network and reads no credentials.
+**What it reads.** Your settings (`enabledPlugins`), the plugin registry `installed_plugins.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, each plugin's `.claude-plugin/quick-menu.json`, the `.claude-plugin/plugin.json` of the folders in `CLAUDE_CODE_PLUGIN_DIRS`, the list of commands Claude Code offers, and the rows `/config` shows. It sends nothing over the network and reads no credentials.
 
 **Its hooks.**
 
@@ -66,6 +66,7 @@ Then run `/reload-plugins` in a running session.
 - `ui.render` on its `Pane`: draws the menu.
 - `command.run`, matched to `/menu` only: answers `/menu` and `/menu refresh` itself. It never sees, changes or blocks any other command, including the ones it runs for you.
 - `plugin.register`: reads the name, root and provenance of each plugin as it loads, to find the `quick-menu.json` of plugins loaded with `--plugin-dir`. It passes every registration on unchanged and never alters or blocks a plugin, its settings, instructions, hooks or tool descriptions.
+- `ui.close`: observed only, to redraw the band's menu button when the pane closes. It passes every close on unchanged.
 - `session.start`: registers `/menu`, loads favourites and folds, and starts discovery.
 
 ## For plugin authors
@@ -97,7 +98,7 @@ Releases follow [semantic versioning](https://semver.org): `version` in `plugin.
 ## Development
 
 ```
-make check                 # claude plugin validate + test, and tsc --noEmit when tsc is on PATH
+make check                 # JSON check, claude plugin validate + test, and tsc --noEmit (tsc from PATH, else via npx)
 claude --plugin-dir .      # try the plugin from this checkout
 ```
 

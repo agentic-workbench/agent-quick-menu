@@ -10,9 +10,9 @@ Schema: `https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/ma
 |---|---|---|---|
 | `$schema` | string | none | Schema URL, for editors. Ignored by the menu. |
 | `version` | `1` | required | Format version of this file (not the plugin's version). Currently 1. A file with an unknown format version is skipped and reported under Problems. |
-| `title` | string | the plugin name | Section heading. |
+| `title` | string, not blank | the plugin name | Section heading. Shown as `title · plugin` unless it equals the plugin name, in any case. |
 | `commands` | array | none | Quick-launch commands, shown as buttons. |
-| `settings` | array of string | all rows | `userConfig` field names of this plugin, in display order. Omitted: all rows. `[]`: none. |
+| `settings` | array of string | all rows | `userConfig` field names of this plugin, in display order (non-empty, at most 64 characters). Omitted: all rows. `[]`: none. |
 
 Each entry of `commands`:
 
@@ -39,8 +39,8 @@ Check a name by typing `/` in Claude Code. A command that is not available is hi
 
 ## Limits
 
-- Rejected characters, in every string: control characters, line and paragraph separators, format characters (bidi marks, zero-width characters, soft hyphen, tag characters), private-use characters and variation selectors. A file holding one is skipped and reported under Problems.
-- Lengths, counted in code points: `title` 60, `label` 40, `command` 64, `args` 500, `description` 200.
+- Rejected characters, in every displayed string (`title`, `label`, `command`, `args`, `description` and each `settings` name): control characters, line and paragraph separators, format characters (bidi marks, zero-width characters, soft hyphen, tag characters), private-use characters and variation selectors. A file holding one is skipped and reported under Problems.
+- Lengths, counted in code points: `title` 60, `label` 40, `command` 64, `args` 500, `description` 200, a `settings` name 64. `title`, `label`, `command` and each `settings` name may not be blank.
 - At most 50 `commands` and 50 `settings`.
 - The file must be a regular file of at most 64 KiB, not a symlink.
 - Reserved titles: `Claude Code`, `Favourites`, `built-in`, and the name of another plugin, in any case.
