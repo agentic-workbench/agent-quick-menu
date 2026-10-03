@@ -143,7 +143,7 @@ const row = (key: string, extra: Record<string, unknown> = {}) => ({
 })
 
 const realButtons = async (ui: any) =>
-  (await ui.findAll({ type: 'Button' })).filter((b: any) => !/star:|^fold:|^(expand|collapse)-all$/.test(String(b.key)))
+  (await ui.findAll({ type: 'Button' })).filter((b: any) => !/star:|^fold:|^(expand|collapse)-all$|^close$/.test(String(b.key)))
 
 const file = (o: unknown) => JSON.stringify(o)
 
@@ -865,7 +865,7 @@ describe('folding', () => {
     await start($)
     const ui = await foldedPane($)
     const hotkeys = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.hotkey).map((b: any) => [b.props.label, b.props.hotkey])
-    expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c']])
+    expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c'], ['Close', 'x']])
     await ui.press({ key: 'expand-all' })
     expect(store.get('folded')).toEqual({ favourites: false, 'plugin:alpha': false, engine: false })
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
@@ -954,7 +954,7 @@ describe('narrow terminal', () => {
   })
 })
 
-describe('live feedback round 1', () => {
+describe('discovery of plugin dirs, row shape, filter and titles', () => {
   test('a --plugin-dir plugin without a known root is listed from $.command.list() with its commands only', async ($, on) => {
     const runs: unknown[] = []
     stub(on, {
@@ -1073,7 +1073,7 @@ describe('live feedback round 1', () => {
   })
 })
 
-describe('live feedback round 2', () => {
+describe('menu command, slow discovery, shadowing and own file', () => {
   test('a row naming /menu is answered by the menu itself, not by $.command.run (the engine skips own hooks on re-entry)', async ($, on) => {
     const toasts: string[] = []
     const runs: { command: string }[] = []
@@ -1424,5 +1424,52 @@ describe('security: favourites and the store', () => {
     const input = await ui.find({ key: 'set:alpha.token' })
     expect(input.props.value).toBe('')
     expect(JSON.stringify(await ui.find({}))).not.toMatch(/hunter2/)
+  })
+})
+
+describe('go-live polish', () => {
+  test('the Close button closes the pane', async ($, on) => {
+    const closed: unknown[] = []
+    on('ui.close', (_$: any, e: any) => (closed.push(e), { value: undefined }))
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    const ui = await foldedPane($)
+    expect((await ui.find({ key: 'close' })).props.hotkey).toBe('x')
+    await ui.press({ key: 'close' })
+    expect(closed).toMatchObject([{ id: 'quick-menu' }])
+  })
+
+  test('the band fallback carries a Close button', async ($, on) => {
+    const closed: unknown[] = []
+    on('ui.close', (_$: any, e: any) => (closed.push(e), { value: undefined }))
+    stub(on, { ...FAV_WORLD(), placed: false })
+    emptyBase(on)
+    await start($)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
+    await ui.press({ key: 'band:close' })
+    expect(closed).toMatchObject([{ id: 'quick-menu' }])
+  })
+
+  test('without favourites the pane hints at the star', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    const ui = await paneText($)
+    expect((await textsOf(ui)).join('\n')).toMatch(/Press ☆ on a row to pin it to the band/)
+    await ui.press({ key: 'star:cmd:alpha:go:--all' })
+    expect((await textsOf(ui)).join('\n')).not.toMatch(/Press ☆/)
+  })
+
+  test('settings of a marketplace plugin are matched through the bare name', async ($, on) => {
+    stub(on, FAV_WORLD({
+      rows: [row('alpha.flag', { kind: 'boolean', value: false, provider: { plugin: 'alpha@mk', tier: 'core' } })],
+    }))
+    emptyBase(on)
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ key: 'star:set:alpha.flag' })).toBeDefined()
+    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))).toHaveLength(1)
   })
 })

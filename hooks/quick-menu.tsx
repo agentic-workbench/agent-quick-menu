@@ -158,9 +158,9 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
     }
     base = configDir
   } else {
-    const home = await $.env.get('HOME')
+    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
     if (!home || !isAbsolutePath(home)) return []
-    base = `${home.replace(/\/+$/, '')}/.claude`
+    base = `${home.replace(/[\\/]+$/, '')}/.claude`
   }
   const registryPath = `${base}/plugins/installed_plugins.json`
   let plugins: Record<string, unknown> = {}
@@ -188,7 +188,9 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
 async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Target[]> {
   const raw = await $.env.get('CLAUDE_CODE_PLUGIN_DIRS')
   const targets: Target[] = []
-  for (const root of (raw ?? '').split(':').filter(Boolean)) {
+  // `;` separates the folders where a drive letter holds a colon (Windows), `:` elsewhere.
+  const separator = /^[A-Za-z]:[\\/]/.test(raw ?? '') || (raw ?? '').includes(';') ? ';' : ':'
+  for (const root of (raw ?? '').split(separator).filter(Boolean)) {
     try {
       if (!isAbsolutePath(root)) throw new Error('not an absolute path')
       const manifest = await readJson($, `${root}/.claude-plugin/plugin.json`)
@@ -691,7 +693,7 @@ function renderCommand(
 }
 
 function settingRows(section: MenuSection, rows: readonly ConfigRow[]): ConfigRow[] {
-  const own = rows.filter(r => r.provider.plugin === section.plugin)
+  const own = rows.filter(r => bareName(r.provider.plugin) === bareName(section.plugin))
   if (section.settings === null) return own
   const out: ConfigRow[] = []
   for (const field of section.settings) {
@@ -733,7 +735,7 @@ function renderFavourite(
 
 /** Settings-only sections: plugins with rows but no menu file section, built at draw time. */
 function configSections(rows: readonly ConfigRow[], filed: readonly MenuSection[]): MenuSection[] {
-  const names = new Set(rows.map(r => r.provider.plugin).filter(n => n !== 'engine' && !filed.some(x => x.plugin === n)))
+  const names = new Set(rows.map(r => r.provider.plugin).filter(n => n !== 'engine' && !filed.some(x => bareName(x.plugin) === bareName(n))))
   const builtin = new Set(rows.filter(r => r.provider.tier === 'builtin').map(r => r.provider.plugin))
   return [...names]
     .map(plugin => {
@@ -952,7 +954,10 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
         <Button key="expand-all" label="Expand all" hotkey="e" onPress={() => void foldAll($, ids, false)} />
         <Button key="collapse-all" label="Collapse all" hotkey="c" onPress={() => void foldAll($, ids, true)} />
         <Text dimColor>{`${pluralOf(sectionBlocks.length, 'section')} · ${pluralOf(commandTotal, 'command')} · ${pluralOf(settingTotal, 'setting')}`}</Text>
+        <Box flexGrow={1} />
+        <Button key="close" label="Close" hotkey="x" onPress={() => void closePane($)} />
       </Box>
+      {d.favs.length === 0 && <Text dimColor>Press ☆ on a row to pin it to the band.</Text>}
       {Input && hasFields && (
         <Input
           key="filter"
@@ -1030,6 +1035,13 @@ async function openPane($: EngineInterface): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
+/** Closes the pane, and the band's section list that stood in for it. */
+async function closePane($: EngineInterface): Promise<void> {
+  await $.ui.close({ id: PANE_ID })
+  await update($, unplaced, () => false)
+  $.ui.invalidate('ui.render')
+}
+
 /** True while the pane was refused for width and is still not drawn. */
 async function isUnplaced($: EngineInterface): Promise<boolean> {
   if (!(await read($, unplaced))) return false
@@ -1091,6 +1103,11 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
           />
         ))}
       </Box>
+      {menu && (
+        <Box key="band:close-row">
+          <Button key="band:close" label="Close" hotkey="x" onPress={() => void closePane($)} />
+        </Box>
+      )}
       {menu}
       {below}
     </Box>

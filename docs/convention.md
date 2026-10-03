@@ -9,7 +9,7 @@ Schema: `https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/ma
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `$schema` | string | none | Schema URL, for editors. Ignored by the menu. |
-| `version` | `1` | required | Schema version. An unknown version is skipped and reported under Problems. |
+| `version` | `1` | required | Format version of this file (not the plugin's version). Currently 1. A file with an unknown format version is skipped and reported under Problems. |
 | `title` | string | the plugin name | Section heading. |
 | `commands` | array | none | Quick-launch commands, shown as buttons. |
 | `settings` | array of string | all rows | `userConfig` field names of this plugin, in display order. Omitted: all rows. `[]`: none. |
@@ -45,9 +45,9 @@ A plugin without `quick-menu.json` gets a settings-only section when it has `use
 
 The menu reads the file from a plugin's root. For a `--plugin-dir` plugin the root is learned from `plugin.register` when its hooks module loads after the menu's; otherwise the menu lists its registered commands only. Name the folder in `CLAUDE_CODE_PLUGIN_DIRS` (absolute paths, `:`-separated) to make the file load.
 
-## Versioning
+## Format versions
 
-Unknown keys are ignored within version 1, so fields can be added without breaking existing files. A new major version is introduced only for breaking changes.
+Unknown keys are ignored within format version 1, so fields can be added without breaking existing files. A new format version is introduced only for breaking changes.
 
 ## Examples
 

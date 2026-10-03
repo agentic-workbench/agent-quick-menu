@@ -4,7 +4,7 @@
 
 - `develop` is where work happens. `main` carries releases.
 - Branch from `develop` and open pull requests into `develop`. `develop` is merged into `main` for a release.
-- The plugin has no version field: an install tracks the commit it was made from.
+- Releases are tagged (`v0.1.0`, ...) and listed in [CHANGELOG.md](CHANGELOG.md). `plugin.json` has no version field on purpose, so an install follows the commit of the branch it tracks: `main` is releases, `develop` is the latest.
 
 ## Commits
 
@@ -25,6 +25,8 @@ claude --plugin-dir .
 ```
 
 Run `/reload-plugins` in a running session after an edit.
+
+`tsc` needs the plugin API types in `.claude-plugin/types/`, which is gitignored. Claude Code lays them there when it loads the plugin, so run `claude --plugin-dir .` once in a fresh checkout before `tsc` or `make check`.
 
 ## Tests
 
