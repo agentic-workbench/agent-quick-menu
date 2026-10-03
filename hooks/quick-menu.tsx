@@ -269,6 +269,40 @@ function commandSections(listed: readonly CommandInfo[], targets: readonly Targe
   }))
 }
 
+/** What a listed command (or its absence) says about a menu command. */
+function availability(info: CommandInfo | undefined): Pick<SectionCommand, 'isAvailable' | 'source' | 'owner'> {
+  if (!info) return { isAvailable: false }
+  return { isAvailable: true, source: info.source, ...(info.plugin !== undefined && { owner: bareName(info.plugin) }) }
+}
+
+/** The file sections' commands marked against `listed`; the sections of commands the engine itself lists stay. */
+function applyListing(found: readonly MenuSection[], listed: readonly CommandInfo[]): MenuSection[] {
+  const byName = new Map(listed.map(c => [c.name, c]))
+  return found.map(section =>
+    section.source !== 'file'
+      ? section
+      : {
+          ...section,
+          commands: section.commands.map(({ source: _s, owner: _o, ...c }) => ({ ...c, ...availability(byName.get(c.command)) })),
+        },
+  )
+}
+
+/**
+ * Lists the commands afresh and marks every section against that, so a command registered after discovery (plugins
+ * register one after another in their session.start) shows as available. Null when the engine cannot list them.
+ */
+async function refreshListing($: EngineInterface): Promise<CommandInfo[] | null> {
+  let listed: CommandInfo[]
+  try {
+    listed = await $.command.list()
+  } catch {
+    return null
+  }
+  await update($, sections, s => applyListing(s, listed))
+  return listed
+}
+
 /**
  * Reads every enabled plugin's menu file and builds the file sections; failures become problems.
  * The first root per name wins: this plugin's own (`$.plugin.root`, which `plugin.register` never hands it), then the
@@ -302,17 +336,13 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
           file.title === undefined || file.title.toLowerCase() === target.name.toLowerCase()
             ? (file.title ?? target.name)
             : `${file.title} · ${target.name}`,
-        commands: file.commands.map(c => {
-          const info = byName.get(c.command)
-          return {
-            command: c.command,
-            label: c.label ?? c.command,
-            ...(c.args !== undefined && { args: c.args }),
-            ...(c.description !== undefined && { description: c.description }),
-            isAvailable: info !== undefined,
-            ...(info && { source: info.source, ...(info.plugin !== undefined && { owner: bareName(info.plugin) }) }),
-          }
-        }),
+        commands: file.commands.map(c => ({
+          command: c.command,
+          label: c.label ?? c.command,
+          ...(c.args !== undefined && { args: c.args }),
+          ...(c.description !== undefined && { description: c.description }),
+          ...availability(byName.get(c.command)),
+        })),
         settings: file.settings,
         source: 'file',
       })
@@ -332,6 +362,8 @@ async function runDiscovery($: EngineInterface): Promise<{ sections: number; pro
   if (run !== discoveryRun) return null
   await update($, sections, () => found.sections)
   await update($, problems, () => found.problems)
+  // The listing discovery took may predate a registration still under way; mark against a fresh one.
+  await refreshListing($)
   $.ui.invalidate('ui.render')
   return { sections: found.sections.length, problems: found.problems.length }
 }
@@ -435,7 +467,20 @@ async function disarm($: EngineInterface, id: string, until: number): Promise<vo
  * A press on a button. A command of another plugin or a built-in first arms (the button reads "press again: /x") and runs
  * on a second press within 5 s, in the pane or the band alike.
  */
-async function pressCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
+async function pressCommand($: EngineInterface, plugin: string, shown: SectionCommand): Promise<void> {
+  let c = shown
+  if (!c.isAvailable) {
+    // Marked unavailable by a listing that may predate its registration: ask again before refusing.
+    const listed = await refreshListing($)
+    const info = listed?.find(x => x.name === c.command)
+    if (!info) {
+      $.ui.toast(toastLine(`Quick menu: /${c.command} is not available`))
+      $.ui.invalidate('ui.render')
+      return
+    }
+    c = { ...c, ...availability(info) }
+    $.ui.invalidate('ui.render')
+  }
   if (runsTag(plugin, c) !== null) {
     const id = commandKey(plugin, c)
     const now = await $.clock.now()
@@ -948,11 +993,10 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
       <Box flexDirection="row" columnGap={2}>
         <Button
           key={`fold:${b.id}`}
-          label={isOpen ? '▾' : '▸'}
+          label={`${isOpen ? '▾' : '▸'} ${b.title}`}
           plain
           onPress={() => void toggleFold($, b.id)}
         />
-        <Text bold color="cyan">{b.title}</Text>
         {b.isBuiltIn && <Text dimColor>built-in</Text>}
         <Text dimColor>{summaryOf(b)}</Text>
       </Box>
@@ -1062,6 +1106,8 @@ function bandItem(
 
 /** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
 async function openPane($: EngineInterface): Promise<void> {
+  // Not awaited: the pane opens at once and redraws when the fresh listing lands.
+  void refreshListing($).then(listed => listed && $.ui.invalidate('ui.render'))
   const opened = await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100, closeOnEscape: true })
   await update($, unplaced, () => !opened.isPlaced)
   if (!opened.isPlaced) $.ui.toast(`Quick menu: ${opened.reason}. Showing it above the prompt instead.`)

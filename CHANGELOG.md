@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- A section title is clickable: the chevron and the title are one plain button, so a press anywhere on `▾ title` (or Enter on it) folds or unfolds the section. A button label takes no colour, so the title is no longer bold cyan; counts and `built-in` stay dim.
+
+### Fixed
+
+- Commands a plugin registers after discovery (one after another in its session.start) no longer show as `(not available)`: availability is computed afresh from `$.command.list()` when the pane opens, on `/menu refresh`, and before a press on a command marked unavailable is refused.
+
 ## [0.1.8] - 2026-10-03
 
 ### Changed

@@ -204,7 +204,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Alpha/ })).toBeDefined()
+    expect(await titleOf(ui, /^Alpha/)).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await ui.find({ text: /Gone \(not available\)/ })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
@@ -242,7 +242,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^cfg$/ })).toBeDefined()
+    expect(await titleOf(ui, /^cfg$/)).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.token' })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.mode' })).toBeDefined()
     expect(await ui.find({ key: 'set:other.x' })).toBeDefined()
@@ -263,7 +263,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^FromCfgDir · alpha$/ })).toBeDefined()
+    expect(await titleOf(ui, /^FromCfgDir · alpha$/)).toBeDefined()
     expect(await ui.find({ text: /installed_plugins/ })).toBeUndefined()
   })
 
@@ -302,7 +302,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^inline$/ })).toBeDefined()
+    expect(await titleOf(ui, /^inline$/)).toBeDefined()
     expect(await ui.find({ key: 'set:inline.opt' })).toBeDefined()
   })
 
@@ -317,7 +317,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^devone$/ })).toBeDefined()
+    expect(await titleOf(ui, /^devone$/)).toBeDefined()
     expect(await ui.find({ text: /two: cannot identify plugin dir/ })).toBeDefined()
   })
 
@@ -332,7 +332,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^devone$/ })).toBeDefined()
+    expect(await titleOf(ui, /^devone$/)).toBeDefined()
     expect(await ui.find({ text: /\/dev\/two:x: cannot identify plugin dir/ })).toBeDefined()
   })
 
@@ -597,9 +597,7 @@ describe('sections', () => {
     })
     await start($)
     const ui = await paneText($)
-    const heads = (await ui.findAll({ type: 'Button' }))
-      .concat(await ui.findAll({ type: 'Text' }))
-      .map((x: any) => x.text as string)
+    const heads = (await textsOf(ui))
       .filter((t: string) => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
     expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
@@ -627,7 +625,14 @@ const FAV_WORLD = (extra: Partial<World> = {}): World => ({
   ...extra,
 })
 
-const textsOf = async (ui: any): Promise<string[]> => (await ui.findAll({ type: 'Text' })).map((x: any) => x.text as string)
+/** Every Text, and each section title (the fold button's label without its chevron), in drawing order. */
+const textsOf = async (ui: any): Promise<string[]> =>
+  (await ui.findAll({ text: /[\s\S]/ }))
+    .filter((x: any) => x.type === 'Text' || (x.type === 'Button' && String(x.key).startsWith('fold:')))
+    .map((x: any) => (x.type === 'Text' ? x.text : String(x.props.label).slice(2)) as string)
+/** A section title: its fold button (the label is `▾ title`). */
+const titleOf = async (ui: any, re: RegExp): Promise<any> =>
+  (await ui.findAll({ type: 'Button' })).find((b: any) => String(b.key).startsWith('fold:') && re.test(String(b.props.label).slice(2)))
 
 describe('favourites', () => {
   test('pinning and unpinning writes through $.store and survives a fresh session.start', async ($, on) => {
@@ -668,7 +673,7 @@ describe('favourites', () => {
     stub(on, FAV_WORLD({ store }))
     await start($)
     const ui = await paneText($)
-    const heads = (await ui.findAll({ type: 'Text' })).map((x: any) => x.text as string)
+    const heads = await textsOf(ui)
     expect(heads.filter((t: string) => t.includes('Favourites') || t.includes('alpha'))).toEqual(['Favourites', 'alpha'])
     const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter((k: string) => k?.startsWith('fav:') && !k.includes('star'))
     expect(keys).toEqual(['fav:set:alpha.name', 'fav:cmd:alpha:stop:'])
@@ -854,10 +859,7 @@ describe('folding', () => {
     const ui = await foldedPane($)
     const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
     const titles = await textsOf(ui)
-    expect(titles).toContain('Favourites')
-    expect(titles).toContain('alpha')
-    expect(titles).toContain('Claude Code')
-    expect(labels.filter((l: string) => l === '▾' || l === '▸')).toEqual(['▾', '▸', '▸'])
+    expect(labels.filter((l: string) => /^[▾▸] /.test(l))).toEqual(['▾ Favourites', '▸ alpha', '▸ Claude Code'])
     expect(await ui.find({ key: 'fav:cmd:alpha:stop:' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeUndefined()
     expect(await ui.find({ key: 'set:theme' })).toBeUndefined()
@@ -871,7 +873,7 @@ describe('folding', () => {
     await ui.press({ key: 'fold:plugin:alpha' })
     expect(store.get('folded')).toEqual({ 'plugin:alpha': false })
     expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toContain('▾')
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toContain('▾ alpha')
     await start($)
     expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
     await ui.press({ key: 'fold:plugin:alpha' })
@@ -965,7 +967,7 @@ describe('narrow terminal', () => {
     await ui.press({ key: 'band:menu' })
     expect(toasts.join()).toMatch(/terminal too narrow/)
     const fresh = await mountBand($, { ...(BAND_PROPS as object), maxRows: 8 })
-    expect((await fresh.find({ key: 'fold:plugin:alpha' })).props.label).toBe('▸')
+    expect((await fresh.find({ key: 'fold:plugin:alpha' })).props.label).toBe('▸ alpha')
     await fresh.press({ key: 'fold:plugin:alpha' })
     expect(await fresh.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
   })
@@ -1006,7 +1008,7 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^repo-tools$/ })).toBeDefined()
+    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:' })).toBeDefined()
     expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read its quick-menu\.json/ })).toBeDefined()
@@ -1068,9 +1070,8 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
     expect(texts.find((t: any) => t.text === '○').props.color).toBe('gray')
     expect((await ui.find({ key: 'set:alpha.flag' })).props.label).toBe('on')
     expect((await ui.find({ key: 'set:alpha.off' })).props.label).toBe('off')
-    const head = texts.find((t: any) => t.text === 'alpha')
-    expect(head.props.color).toBe('cyan')
-    expect(head.props.bold).toBe(true)
+    const head = await titleOf(ui, /^alpha$/)
+    expect(head.props.plain).toBe(true)
   })
 
   test('a pinned star is undimmed and an unpinned one dim', async ($, on) => {
@@ -1138,7 +1139,7 @@ describe('discovery of plugin dirs, row shape, filter and titles', () => {
     expect(titles).toContain('alpha')
     expect(titles).toContain('agents-md')
     expect(titles).toContain('shiny')
-    expect(labels.filter((l: string) => l === '▸')).toHaveLength(3)
+    expect(labels.filter((l: string) => l.startsWith('▸ '))).toHaveLength(3)
     const tags = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.text === 'built-in')
     expect(tags).toHaveLength(1)
     expect(tags[0].props.dimColor).toBe(true)
@@ -1217,7 +1218,7 @@ describe('menu command, slow discovery, shadowing and own file', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^repo-tools$/ })).toBeDefined()
+    expect(await ui.find({ key: 'fold:plugin:repo-tools' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
     expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:--all' })).toBeDefined()
     expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS/ })).toBeUndefined()
@@ -1239,6 +1240,24 @@ describe('menu command, slow discovery, shadowing and own file', () => {
     expect(await ui.find({ text: /not available/ })).toBeUndefined()
   })
 
+  test('a command registered after discovery is available once the pane is opened', async ($, on) => {
+    const world: World = {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'late', label: 'Late' }] }),
+      commands: [],
+    }
+    stub(on, world)
+    await start($)
+    await new Promise(r => setTimeout(r, 50))
+    const ui = await paneText($)
+    expect(await ui.find({ text: /Late \(not available\)/ })).toBeDefined()
+    world.commands = ['late']
+    await $.command.run({ command: 'menu' } as never)
+    await new Promise(r => setTimeout(r, 50))
+    expect(await ui.find({ key: 'cmd:alpha:late:' })).toBeDefined()
+    expect(await ui.find({ text: /not available/ })).toBeUndefined()
+  })
+
   test('the menu reads its own quick-menu.json from $.plugin.root, with no --plugin-dir note', async ($, on) => {
     stub(on, {
       registry: {},
@@ -1247,7 +1266,7 @@ describe('menu command, slow discovery, shadowing and own file', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Quick menu · agent-quick-menu$/ })).toBeDefined()
+    expect(await titleOf(ui, /^Quick menu · agent-quick-menu$/)).toBeDefined()
     expect((await ui.find({ key: 'cmd:agent-quick-menu:menu:refresh' })).props.label).toBe('Refresh')
     expect(await ui.find({ key: 'cmd:agent-quick-menu:menu:' })).toBeUndefined()
     expect(await ui.find({ text: /loaded with --plugin-dir/ })).toBeUndefined()
@@ -1450,7 +1469,7 @@ describe('security: menu file input', () => {
     stub(on, { ...ALPHA, files: alphaFile({ version: 1, title: 'Fancy' }) })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Fancy · alpha$/ })).toBeDefined()
+    expect(await titleOf(ui, /^Fancy · alpha$/)).toBeDefined()
   })
 })
 
@@ -1494,7 +1513,7 @@ describe('security: paths', () => {
     stub(on, { ...ALPHA, registry: { 'alpha@mk': [{ installPath: 'p/alpha' }] }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Alpha/ })).toBeUndefined()
+    expect(await titleOf(ui, /^Alpha/)).toBeUndefined()
     expect(await ui.find({ text: /installPath is not absolute/ })).toBeDefined()
   })
 
@@ -1509,7 +1528,7 @@ describe('security: paths', () => {
     stub(on, { ...ALPHA, vars: { HOME: '' }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Alpha/ })).toBeUndefined()
+    expect(await titleOf(ui, /^Alpha/)).toBeUndefined()
     expect(await ui.find({ text: /Problems/ })).toBeUndefined()
   })
 
@@ -1517,7 +1536,7 @@ describe('security: paths', () => {
     stub(on, { ...ALPHA, vars: { HOME: '', USERPROFILE: HOME }, files: alphaFile({ version: 1, title: 'Alpha' }) })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^Alpha/ })).toBeDefined()
+    expect(await titleOf(ui, /^Alpha/)).toBeDefined()
   })
 
   test('a relative CLAUDE_CODE_PLUGIN_DIRS root is a problem, not read', async ($, on) => {
