@@ -92,7 +92,7 @@ The full format is in [docs/convention.md](docs/convention.md).
 
 ## Releases
 
-Releases are tagged (`v0.1.0`, ...) and listed in [CHANGELOG.md](CHANGELOG.md). `plugin.json` has no version field on purpose, so an install follows the commit of the branch it tracks: `main` is releases, `develop` is the latest.
+Releases follow [semantic versioning](https://semver.org): `version` in `plugin.json` is the release, tagged as `v<version>` and listed in [CHANGELOG.md](CHANGELOG.md). Claude Code updates an install when that version changes, so installs from `main` get each release.
 
 ## Development
 

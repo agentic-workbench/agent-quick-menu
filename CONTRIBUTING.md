@@ -4,7 +4,7 @@
 
 - `develop` is where work happens. `main` carries releases.
 - Branch from `develop` and open pull requests into `develop`. `develop` is merged into `main` for a release.
-- Releases are tagged (`v0.1.0`, ...) and listed in [CHANGELOG.md](CHANGELOG.md). `plugin.json` has no version field on purpose, so an install follows the commit of the branch it tracks: `main` is releases, `develop` is the latest.
+- Releases follow [semantic versioning](https://semver.org). A release bumps `version` in `.claude-plugin/plugin.json`, adds its CHANGELOG section, merges `develop` into `main` and tags `v<version>`. Claude Code updates an install only when `version` changes, so every release must bump it. To try unreleased work, run it with `claude --plugin-dir .`.
 
 ## Commits
 

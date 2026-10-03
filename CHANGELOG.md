@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are tagged (`v0.1.0`, ...) and listed here. `plugin.json` has no version field on purpose, so installs follow the commit of the branch they track (`main` is releases, `develop` is the latest). The first release is 0.1.0.
+All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [semantic versioning](https://semver.org). Each release bumps `version` in `.claude-plugin/plugin.json` and is tagged `v<version>`.
 
 ## [Unreleased]
+
+## [0.1.2] - 2026-10-03
+
+### Changed
+
+- `plugin.json` carries the release `version`, so Claude Code updates installs on each release.
 
 ## [0.1.1] - 2026-10-03
 
@@ -30,6 +36,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/agentic-workbench/agent-quick-menu/releases/tag/v0.1.0
