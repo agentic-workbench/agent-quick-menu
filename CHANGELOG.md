@@ -4,6 +4,13 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-10-03
+
+### Changed
+
+- README with logo, badges, navigation, highlights, a current screenshot and a fuller plugin-author example.
+- `CODEOWNERS`; awesome-claude-code-mods badges.
+
 ## [0.1.13] - 2026-10-03
 
 ### Added
@@ -135,7 +142,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.10...v0.1.11
