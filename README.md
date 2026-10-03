@@ -1,13 +1,42 @@
-# agent-quick-menu
+<p align="center">
+  <img src=".claude-plugin/icon.png" alt="agent-quick-menu logo" width="128">
+</p>
 
-[![License: MIT](https://img.shields.io/github/license/agentic-workbench/agent-quick-menu)](LICENSE)
-[![CI](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml/badge.svg)](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml)
-[![Listed in awesome-claude-code-mods](https://awesome.re/mentioned-badge.svg)](https://github.com/karanb192/awesome-claude-code-mods)
-[![validates](https://raw.githubusercontent.com/karanb192/awesome-claude-code-mods/main/badges/agentic-workbench--agent-quick-menu--agent-quick-menu-validates.svg)](https://github.com/karanb192/awesome-claude-code-mods)
+<h1 align="center">agent-quick-menu</h1>
 
-A pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.
+<p align="center">
+  <b>One menu for Claude Code:</b> every plugin's commands and settings, and Claude Code's own,<br>
+  in a pane beside the transcript and a band above the prompt.
+</p>
 
-![The quick menu pane beside the transcript, and the menu button in the band above the prompt](docs/screenshot.png)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/agentic-workbench/agent-quick-menu" alt="License: MIT"></a>
+  <a href="https://github.com/agentic-workbench/agent-quick-menu/releases"><img src="https://img.shields.io/github/v/release/agentic-workbench/agent-quick-menu" alt="Latest release"></a>
+  <a href="https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml"><img src="https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/karanb192/awesome-claude-code-mods"><img src="https://awesome.re/mentioned-badge.svg" alt="Listed in awesome-claude-code-mods"></a>
+  <a href="https://github.com/karanb192/awesome-claude-code-mods"><img src="https://raw.githubusercontent.com/karanb192/awesome-claude-code-mods/main/badges/agentic-workbench--agent-quick-menu--agent-quick-menu-validates.svg" alt="validates"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#for-plugin-authors">For plugin authors</a> ·
+  <a href="docs/convention.md">Convention</a> ·
+  <a href="#what-this-plugin-does-on-your-machine">What it does on your machine</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="The quick menu pane: sections per plugin with command buttons, their slash commands and descriptions, and settings with on/off toggles" width="900">
+</p>
+
+## Highlights
+
+- **Every plugin in one place.** Each plugin gets a foldable section with its commands as buttons and its settings as editable rows; Claude Code's own `/config` settings get one too.
+- **Commands that ask.** A button can prompt for its argument (a branch, a date) before it runs, with save and cancel.
+- **Settings you can change in place.** Toggles, option buttons and text fields, each with its description; a filter finds a row by name or description.
+- **Favourites in the band.** Pin any command or setting with ☆ and it sits above the prompt, one press away.
+- **Safe by default.** Every button shows the slash command it runs; another plugin's or a built-in command needs a second press. Menu files are treated as untrusted input.
+- **One file to join.** A plugin registers with a small `.claude-plugin/quick-menu.json`; no code, no dependency.
 
 ## Requirements
 
@@ -80,11 +109,15 @@ Add `.claude-plugin/quick-menu.json` to your plugin:
 {
   "$schema": "https://raw.githubusercontent.com/agentic-workbench/agent-quick-menu/main/schema/quick-menu.schema.json",
   "version": 1,
-  "commands": [{ "command": "my-plugin:status", "label": "Status" }]
+  "commands": [
+    { "command": "my-plugin:status", "label": "Status", "description": "Show the plugin's state" },
+    { "command": "my-plugin:deploy", "label": "Deploy to…", "ask": { "placeholder": "environment", "default": "staging" } }
+  ],
+  "settings": ["verbose"]
 }
 ```
 
-The full format is in [docs/convention.md](docs/convention.md).
+That's it: `commands` become buttons, `ask` prompts for an argument first, and `settings` lists which of your `userConfig` fields to show (omit it to show all). Without agent-quick-menu installed the file is never read. The full format, limits and versioning promise are in [docs/convention.md](docs/convention.md).
 
 ## Limitations
 
