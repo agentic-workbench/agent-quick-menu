@@ -625,8 +625,8 @@ const PILL_BG_HOVER = '#3d6a89'
 const BOX_BORDER = 'gray'
 const BOX_BORDER_HOVER = 'cyan'
 
-/** The `buttonStyle` option; brackets unless the person picked another. */
-let buttonStyle: ButtonStyle = 'brackets'
+/** The `buttonStyle` option; pill unless the person picked another. */
+let buttonStyle: ButtonStyle = 'pill'
 const bandStyle = (): ButtonStyle => (buttonStyle === 'box' ? 'pill' : buttonStyle)
 
 /** Cells a styled button takes beyond its label, and the gap that follows it before the next element. */
@@ -642,10 +642,11 @@ function styledButton(ui: Ui, style: ButtonStyle, b: StyledButton) {
   if (style === 'brackets') {
     return <Button key={b.key} label={b.label} {...(b.plain && { plain: true as const })} {...hotkey} onPress={b.onPress} />
   }
-  const inner = <Button key={b.key} label={pad(b.label, b.minWidth ?? 0)} plain {...hotkey} onPress={b.onPress} />
+  // A pill hugs its label (the slot in the command row holds the empty space); a box keeps the padded label.
+  const inner = <Button key={b.key} label={style === 'pill' ? b.label : pad(b.label, b.minWidth ?? 0)} plain {...hotkey} onPress={b.onPress} />
   if (style === 'pill') {
     return (
-      <Box key={`pill:${b.key}`} backgroundColor={PILL_BG} paddingX={1} hover={{ backgroundColor: PILL_BG_HOVER }}>
+      <Box key={`pill:${b.key}`} alignSelf="flex-start" backgroundColor={PILL_BG} paddingX={1} hover={{ backgroundColor: PILL_BG_HOVER }}>
         {inner}
       </Box>
     )
@@ -784,23 +785,40 @@ function renderCommand(
   const used = 2 + Math.max(fav.cmdPad, width(c.label)) + chromeOf(fav.style) + gapOf(fav.style) + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
   const room = fav.columns - used - 1
   const help = c.isAvailable && c.description && room >= 8 ? clip(c.description, room) : null
+  const shownLabel = tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label
+  const button = c.isAvailable
+    ? styledButton(ui, fav.style, {
+        key: id,
+        label: shownLabel,
+        onPress: () => void pressCommand($, plugin, c),
+        minWidth: fav.cmdPad,
+      })
+    : null
   return (
     <Box key={`row:${id}`} flexDirection="row" {...(fav.style === 'box' && { alignItems: 'center' as const })}>
-      {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
+      {fav.style === 'box' ? (
+        <Box key={`starbox:${id}`} alignSelf="center">
+          {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
+        </Box>
+      ) : (
+        renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)
+      )}
       <Text> </Text>
       {c.isAvailable ? (
-        styledButton(ui, fav.style, {
-          key: id,
-          label: tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label,
-          onPress: () => void pressCommand($, plugin, c),
-          minWidth: fav.cmdPad,
-        })
+        fav.style === 'pill' ? (
+          <Box key={`slot:${id}`} width={Math.max(fav.cmdPad, width(shownLabel)) + 2} flexShrink={0}>
+            {button}
+          </Box>
+        ) : (
+          button
+        )
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
-      {c.isAvailable && (
+      {c.isAvailable && fav.style !== 'pill' && (
         <Text>{' '.repeat(fav.style === 'brackets' ? Math.max(0, fav.cmdPad - width(c.label)) + gapOf(fav.style) : gapOf(fav.style))}</Text>
       )}
+      {c.isAvailable && fav.style === 'pill' && <Text> </Text>}
       {c.isAvailable && <Text dimColor>{runs}</Text>}
       {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
       {help !== null && <Text dimColor>{` ${help}`}</Text>}
@@ -1259,7 +1277,7 @@ let bandHotkeys = false
 
 export const register: Register = (on, options) => {
   bandHotkeys = options.bandHotkeys === true
-  buttonStyle = options.buttonStyle === 'pill' || options.buttonStyle === 'box' ? options.buttonStyle : 'brackets'
+  buttonStyle = options.buttonStyle === 'brackets' || options.buttonStyle === 'box' ? options.buttonStyle : 'pill'
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)

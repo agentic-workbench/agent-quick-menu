@@ -20,8 +20,8 @@
     "buttonStyle": {
       "type": "string",
       "title": "Button style",
-      "description": "How command and toolbar buttons look: brackets (the plain [ label ]), pill (a filled one-line chip) or box (a rounded three-row frame; the one-row band uses pill).",
-      "default": "brackets",
+      "description": "How command and toolbar buttons look: pill (a filled one-line chip that hugs its label), brackets (the plain [ label ]) or box (a rounded three-row frame; the one-row band uses pill).",
+      "default": "pill",
       "options": ["brackets", "pill", "box"]
     }
   },
