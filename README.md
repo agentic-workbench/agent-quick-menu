@@ -45,7 +45,7 @@ Then run `/reload-plugins` in a running session.
 
 ## What appears
 
-- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands one per line (button, then the `/command args` hint) and its settings (`userConfig`) as an aligned label/value table.
+- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands one per line (button, then the `/command args` hint) and its settings (`userConfig`) as an aligned label/value table. A setting's description (`userConfig` `description`) follows its value dimmed, clipped to the pane width and dropped when under 8 cells remain; the filter matches it too.
 - A commands-only section for a plugin loaded with `--plugin-dir` whose root is not known (see Limitations): its registered commands, and a dim line saying to set `CLAUDE_CODE_PLUGIN_DIRS`.
 - A settings-only section for each plugin without the file that has `userConfig` rows.
 - A "Claude Code" section with Claude Code's own settings.

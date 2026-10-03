@@ -1360,11 +1360,12 @@ describe('security: what a button runs', () => {
     commands: ['go'],
     files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', description: 'Runs the whole thing now '.repeat(6) }] }),
   })
-  const textsAt = async ($: any, bodyColumns: number) => {
+  const paneAt = async ($: any, bodyColumns: number) => {
     const ui = await $.ui.mount({ plugin: 'agent-quick-menu', surface: 'terminal', component: 'Pane', props: { ...(PANE_PROPS as object), bodyColumns }, requestId: 'quick-menu' })
     await ui.press({ key: 'expand-all' })
-    return textsOf(ui)
+    return ui
   }
+  const textsAt = async ($: any, bodyColumns: number) => textsOf(await paneAt($, bodyColumns))
 
   test('a command description is dim text after the hint, clipped so the row fits one line', async ($, on) => {
     stub(on, describedWorld())
@@ -1380,6 +1381,48 @@ describe('security: what a button runs', () => {
     stub(on, describedWorld())
     await start($)
     expect((await textsAt($, 18)).some(t => t.includes('Runs'))).toBe(false)
+  })
+
+  const settingWorld = (extra: Record<string, unknown> = {}): World => ({
+    ...FOREIGN,
+    files: alphaFile({ version: 1 }),
+    rows: [row('alpha.mode', { value: 'fast', description: 'Picks the speed of the whole run '.repeat(4), ...extra })],
+  })
+
+  test('a setting description is dim text after the value, clipped to the pane width', async ($, on) => {
+    stub(on, settingWorld())
+    await start($)
+    const ui = await paneAt($, 70)
+    const wide = (await textsOf(ui)).find(t => t.includes('Picks the speed'))!
+    expect(wide).toBeDefined()
+    expect([...wide].length).toBeLessThanOrEqual(70)
+    expect(wide.endsWith('…')).toBe(true)
+    const t = (await ui.findAll({ type: 'Text' })).find((x: any) => /Picks the speed/.test(x.text))
+    expect(t.props.dimColor).toBe(true)
+  })
+
+  test('a locked setting shows managed, then the description', async ($, on) => {
+    stub(on, settingWorld({ isLocked: true, description: 'Set by policy' }))
+    await start($)
+    const texts = await textsAt($, 100)
+    expect(texts.some(t => t.includes('managed'))).toBe(true)
+    expect(texts).toContain('  Set by policy')
+  })
+
+  test('a setting description is dropped when under 8 cells remain', async ($, on) => {
+    stub(on, settingWorld())
+    await start($)
+    expect((await textsAt($, 20)).some(t => t.includes('Picks'))).toBe(false)
+  })
+
+  test('the filter matches a setting description', async ($, on) => {
+    stub(on, settingWorld())
+    await start($)
+    const ui = await foldedPane($)
+    await ui.input({ key: 'filter', text: 'SPEED' })
+    expect(await ui.find({ key: 'set:alpha.mode' })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'nonsense' })
+    expect(await ui.find({ key: 'set:alpha.mode' })).toBeUndefined()
   })
 
   test('a built-in or another plugin\'s command needs a second press within 5 s, in the pane and the band', async ($, on) => {

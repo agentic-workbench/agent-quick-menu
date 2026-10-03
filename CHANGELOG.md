@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Added
+
+- Settings rows show their description dim after the value, clipped to the pane width and dropped under 8 cells; the filter matches it.
+
 ## [0.1.11] - 2026-10-03
 
 ### Removed

@@ -722,11 +722,17 @@ function renderSetting(
   } else {
     control = <Text key={id}>{`${label}  ${shown}`}</Text>
   }
+  // The description takes what is left of the line after star, label, value or editor and a note; with under 8 cells left it is dropped.
+  const valueWidth = row.isLocked ? width(`${shown}  managed`) : row.kind === 'boolean' && !isSecret ? 5 + (row.value ? 0 : 1) : width(shown) + (row.kind === 'choice' ? 2 : 0)
+  const used = 2 + width(label) + 2 + valueWidth + (note ? 2 + width(note.text) : 0) + 2
+  const room = fav.columns - used
+  const help = row.description && room >= 8 ? clip(row.description.replace(/\s+/g, ' '), room) : null
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'setting', plugin, key: row.key }, settingKey(row.key), fav)}
       <Text> </Text>
       {control}
+      {help !== null && <Text dimColor>{`  ${help}`}</Text>}
       {note && <Text color="red">{`  ${note.text}`}</Text>}
     </Box>
   )
@@ -902,7 +908,7 @@ async function loadMenu($: EngineInterface): Promise<MenuData> {
   const all = [...s, ...configSections(rows, s)]
   const blocks: Block[] = []
   const hasText = (needle2: string, ...texts: string[]): boolean => texts.some(t => t.toLowerCase().includes(needle2))
-  const keepRow = (r: ConfigRow): boolean => needle === '' || hasText(needle, r.label, r.key)
+  const keepRow = (r: ConfigRow): boolean => needle === '' || hasText(needle, r.label, r.key, r.description ?? '')
   const keepCommand = (c: SectionCommand): boolean => needle === '' || hasText(needle, c.label, c.command)
   const keepFav = (f: Favourite): boolean => {
     if (needle === '') return true
