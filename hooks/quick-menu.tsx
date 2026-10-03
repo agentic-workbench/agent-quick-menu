@@ -413,7 +413,8 @@ async function runAny($: EngineInterface, c: SectionCommand): Promise<{ text?: s
   return $.command.run({ command: c.command, ...(c.args !== undefined && { args: c.args }) })
 }
 
-type Note = { kind: 'deny' | 'error'; text: string }
+/** A row's note, with the value the row showed when it was made (`shown`, as configArg spells it): drawn only while the row still shows that value. */
+type Note = { kind: 'deny' | 'error'; text: string; shown: string }
 type RowState = { queued: Record<string, true>; notes: Record<string, Note>; armed: { id: string; until: number } }
 const DISARMED = { id: '', until: 0 }
 
@@ -522,17 +523,38 @@ async function runCommand($: EngineInterface, plugin: string, c: SectionCommand)
 /** A value as `/config key=value` takes it: bare text (quotes would become part of the value), a list comma-joined. */
 const configArg = (value: ConfigValue): string => (typeof value === 'object' ? value.join(',') : String(value))
 
+/** The row as `$.config.list()` has it now; undefined when it is gone or the list cannot be read. */
+async function currentRow($: EngineInterface, key: string): Promise<ConfigRow | undefined> {
+  try {
+    return (await $.config.list()).find(r => r.key === key)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Writes one row through `/config <key>=<value>`, then reads the row back: the value it holds decides, not the reply.
+ * In an interactive session `$.command.run` resolves `{}` for `/config` (its "Set <label> to <value>" goes to the
+ * transcript only), so the reply text cannot tell a write from a refusal; a headless one answers with text.
+ */
 async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigValue): Promise<void> {
   const id = settingKey(row.key)
+  const before = configArg(row.value)
   await setNote($, id, null)
   try {
     const result = await $.command.run({ command: 'config', args: `${row.key}=${configArg(value)}` })
-    // `/config` answers a refusal as text, not as an error; a write reads "Set <label> to <value>".
     const text = (result.text ?? '').trim()
-    // An unchanged value is answered as text too ("not changed", "already ..."); that is no refusal.
-    if (!text.startsWith('Set ') && !/not changed|already/i.test(text)) await setNote($, id, { kind: 'deny', text: text || 'not changed' })
+    const now = await currentRow($, row.key)
+    if (now) {
+      const after = configArg(now.value)
+      // Written (as asked, or as a config.set hook clamped it), or asked for the value it already held: no refusal.
+      if (after !== configArg(value) && after === before) await setNote($, id, { kind: 'deny', text: text || 'not changed', shown: after })
+    } else if (text !== '' && !text.startsWith('Set ') && !/not changed|already/i.test(text)) {
+      // The row cannot be read back: only a reply that is no write and no "unchanged" is a refusal.
+      await setNote($, id, { kind: 'deny', text, shown: before })
+    }
   } catch (err) {
-    await setNote($, id, { kind: 'error', text: message(err) })
+    await setNote($, id, { kind: 'error', text: message(err), shown: before })
   }
   $.ui.invalidate('ui.render')
 }
@@ -551,7 +573,7 @@ async function pickChoice($: EngineInterface, row: ConfigRow, value: string): Pr
 async function submitNumber($: EngineInterface, row: ConfigRow, raw: string): Promise<void> {
   const n = Number(raw)
   if (raw.trim() === '' || !Number.isFinite(n)) {
-    await setNote($, settingKey(row.key), { kind: 'error', text: `"${raw}" is not a number` })
+    await setNote($, settingKey(row.key), { kind: 'error', text: `"${raw}" is not a number`, shown: configArg(row.value) })
     $.ui.invalidate('ui.render')
     return
   }
@@ -656,7 +678,9 @@ function renderSetting(
   const { Box, Text, Button } = ui
   const { Input } = ui as Partial<Pick<Elements['terminal'], 'Input'>>
   const id = fav.prefix + settingKey(row.key)
-  const note = notes[settingKey(row.key)]
+  const made = notes[settingKey(row.key)]
+  // A note stands for the value it was made against: once the row shows another, it is stale and not drawn.
+  const note = made && made.shown === configArg(row.value) ? made : undefined
   // 2.1.288 lists no secret rows (`userConfig` secrets stay in secure storage); should a row ever say it is sensitive, its value is masked and only overwritten.
   const isSecret = (row as { sensitive?: unknown }).sensitive === true
   const shown = isSecret ? '••••' : Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
@@ -1152,6 +1176,8 @@ function bandItem(
 
 /** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
 async function openPane($: EngineInterface): Promise<void> {
+  // A reopened pane starts without the notes of earlier writes.
+  await update($, rowState, s => ({ ...s, notes: {} }))
   // Not awaited: the pane opens at once and redraws when the fresh listing lands.
   void refreshListing($).then(listed => listed && $.ui.invalidate('ui.render'))
   const opened = await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100, closeOnEscape: true })

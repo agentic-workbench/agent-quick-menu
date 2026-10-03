@@ -48,7 +48,8 @@ export type MenuProblem = { plugin: string; message: string }
 /** Transient per-row pane state: commands waiting on `$.command.run`, and the deny or error beside a row. */
 export type RowState = {
   queued: Record<string, true>
-  notes: Record<string, { kind: 'deny' | 'error'; text: string }>
+  /** `shown`: the row's value (as `/config key=value` spells it) when the note was made; the note is drawn only while the row still shows it. */
+  notes: Record<string, { kind: 'deny' | 'error'; text: string; shown: string }>
   /** The command whose button was pressed once and waits for the confirming press until `until` (`$.clock.now()` ms). */
   armed: { id: string; until: number }
 }

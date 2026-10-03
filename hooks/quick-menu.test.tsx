@@ -26,6 +26,8 @@ type World = {
   rows?: Record<string, unknown>[]
   run?: (e: { command: string; args?: string }) => unknown
   set?: (e: { key: string; value: string }) => { value?: string; deny?: string }
+  /** `/config` answers `{}`, as an interactive session's `$.command.run` does: its text goes to the transcript only. */
+  silentConfig?: boolean
   open?: (e: unknown) => void
   placed?: false
   store?: Map<string, unknown>
@@ -104,6 +106,16 @@ function stub(on: any, w: World) {
       const at = (e.args ?? '').indexOf('=')
       const set = { key: (e.args ?? '').slice(0, at), value: (e.args ?? '').slice(at + 1) }
       const out = w.set ? w.set(set) : { value: set.value }
+      // A write lands in the row, as `$.config.list()` reads it afterwards, in the row's kind.
+      if (out.deny === undefined && w.rows) {
+        const written = out.value ?? set.value
+        w.rows = w.rows.map(r =>
+          r.key !== set.key
+            ? r
+            : { ...r, value: r.kind === 'boolean' ? written === 'true' : r.kind === 'number' ? Number(written) : written },
+        )
+      }
+      if (w.silentConfig) return {}
       return { text: out.deny !== undefined ? out.deny : `Set ${set.key} to ${set.value}` }
     }
     return w.run ? w.run(e) : { text: 'ok' }
@@ -574,12 +586,91 @@ describe('settings', () => {
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
   })
 
-  test('a reply that the value is unchanged is no refusal and shows no note', async ($, on) => {
-    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'alpha.flag is not changed' }) }))
+  test('writing the value a row already holds is no refusal and shows no note', async ($, on) => {
+    stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: () => ({ deny: 'alpha.name is not changed' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.input({ key: 'set:alpha.name', text: 'x' })
+    expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
+  })
+
+  // An interactive session's `$.command.run` resolves `{}` for `/config`: the row read back decides.
+  test('a write that lands shows no note when /config answers no text (interactive)', async ($, on) => {
+    stub(
+      on,
+      setup(
+        [
+          row('alpha.flag', { kind: 'boolean', value: false }),
+          row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] }),
+          row('alpha.name', { kind: 'text', value: 'x' }),
+          row('alpha.count', { kind: 'number', value: 1 }),
+        ],
+        { silentConfig: true },
+      ),
+    )
     await start($)
     const ui = await paneText($)
     await ui.press({ key: 'set:alpha.flag' })
+    await ui.press({ key: 'set:alpha.mode' })
+    await ui.press({ key: 'set:alpha.mode:b' })
+    await ui.input({ key: 'set:alpha.name', text: 'y' })
+    await ui.input({ key: 'set:alpha.count', text: '2' })
+    // The same value again: nothing to refuse.
+    await ui.input({ key: 'set:alpha.name', text: 'y' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
+    expect((await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'red')).toHaveLength(0)
+  })
+
+  test('a write the row does not take shows "not changed" when /config answers no text', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { silentConfig: true, set: () => ({ deny: 'no' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.find({ text: /not changed/ })).toBeDefined()
+  })
+
+  test('a value a config.set hook clamped is a write, not a refusal', async ($, on) => {
+    stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { silentConfig: true, set: () => ({ value: '10' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.input({ key: 'set:alpha.count', text: '99' })
+    expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
+  })
+
+  test('a row\'s note clears on its next successful write', async ($, on) => {
+    let refuse = true
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: e => (refuse ? { deny: 'policy says no' } : { value: e.value }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+    refuse = false
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.findAll({ text: /policy says no/ })).toHaveLength(0)
+  })
+
+  test('a row\'s note is not drawn once the row shows another value', async ($, on) => {
+    const world = setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) })
+    stub(on, world)
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+    // Changed elsewhere (the /config menu, another plugin): the next draw shows the new value without the old note.
+    world.rows = [row('alpha.flag', { kind: 'boolean', value: true })]
+    await ui.press({ key: 'expand-all' })
+    expect(await ui.findAll({ text: /policy says no/ })).toHaveLength(0)
+  })
+
+  test('reopening the pane clears the notes of earlier writes', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+    await $.command.run({ command: 'menu' } as never)
+    await ui.press({ key: 'expand-all' })
+    expect(await ui.findAll({ text: /policy says no/ })).toHaveLength(0)
   })
 
   test('a text value with spaces is written bare, after the first `=`', async ($, on) => {
