@@ -981,8 +981,6 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
         <Button key="expand-all" label="Expand all" hotkey="e" onPress={() => void foldAll($, ids, false)} />
         <Button key="collapse-all" label="Collapse all" hotkey="c" onPress={() => void foldAll($, ids, true)} />
         <Text dimColor>{`${pluralOf(sectionBlocks.length, 'section')} · ${pluralOf(commandTotal, 'command')} · ${pluralOf(settingTotal, 'setting')}`}</Text>
-        <Box flexGrow={1} />
-        <Button key="close" label="Close" hotkey="x" onPress={() => void closePane($)} />
       </Box>
       {d.favs.length === 0 && <Text dimColor>Press ☆ on a row to pin it to the band.</Text>}
       {Input && hasFields && (

@@ -893,7 +893,7 @@ describe('folding', () => {
     await start($)
     const ui = await foldedPane($)
     const hotkeys = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.hotkey).map((b: any) => [b.props.label, b.props.hotkey])
-    expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c'], ['Close', 'x']])
+    expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c']])
     await ui.press({ key: 'expand-all' })
     expect(store.get('folded')).toEqual({ favourites: false, 'plugin:alpha': false, engine: false })
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
@@ -1523,16 +1523,13 @@ describe('security: favourites and the store', () => {
 })
 
 describe('go-live polish', () => {
-  test('the Close button closes the pane', async ($, on) => {
-    const closed: unknown[] = []
-    on('ui.close', (_$: any, e: any) => (closed.push(e), { value: undefined }))
+  test('the pane has no own Close button; the engine close mark closes it', async ($, on) => {
     stub(on, FAV_WORLD())
     emptyBase(on)
     await start($)
     const ui = await foldedPane($)
-    expect((await ui.find({ key: 'close' })).props.hotkey).toBe('x')
-    await ui.press({ key: 'close' })
-    expect(closed).toMatchObject([{ id: 'quick-menu' }])
+    expect(await ui.findAll({ key: 'close' })).toEqual([])
+    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.label === 'Close')).toEqual([])
   })
 
   test('the band fallback carries a Close button', async ($, on) => {

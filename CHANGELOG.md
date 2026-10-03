@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-03
+
+### Changed
+
+- The pane uses Claude Code's own close mark instead of a second Close button.
+
 ## [0.1.4] - 2026-10-03
 
 ### Changed
@@ -41,14 +47,15 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `.claude-plugin/quick-menu.json` convention with a JSON schema, and a "Problems" list for skipped files.
 - `/menu refresh` and background discovery after `session.start`.
 - Commands-only and settings-only sections for plugins without a menu file.
-- A `Close` button (`x`) at the right end of the pane's top line and in the narrow-terminal band; a hint to pin with `☆` while there are no favourites.
+- A `Close` button (`x`) in the narrow-terminal band (the pane closes with Claude Code's `×`, Esc or ctrl+x x); a hint to pin with `☆` while there are no favourites.
 - A `bandHotkeys` option (off by default) that binds the digits `1` to `9` in the band to the pinned own-plugin commands, by their place in the pinned list.
 - Each command button shows what it runs (`/<command> <args>`); a command owned by another plugin or a built-in is tagged and needs a second press within 5 seconds.
 - Menu files are treated as untrusted: regular files of at most 64 KiB, strings with control, bidi or zero-width characters rejected, length and count limits, and clipped messages.
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.1...v0.1.2

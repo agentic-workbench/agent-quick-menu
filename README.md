@@ -37,10 +37,10 @@ Then run `/reload-plugins` in a running session.
 - `ctrl+x tab` focuses the band.
 - Band digits are opt-in: with the `bandHotkeys` setting on (default off) and an empty prompt, `1` to `9` press the pinned commands of this plugin only, numbered by their position in the pinned list (a gap keeps the other numbers). Other plugins' commands and setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
-- Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. `Close` (`x`) at the right end of the top line, or Escape, closes the pane. With no favourites yet, the pane says to press `☆` on a row.
+- Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. The pane closes with Claude Code's own `×`, Escape or ctrl+x x. With no favourites yet, the pane says to press `☆` on a row.
 - The filter field at the top (`filter…`) matches setting labels and keys and command names, case-insensitive, across every section. Sections without a match are hidden, matching ones open while a filter is set, and the counts follow.
 - Every setting row is a plain label and a value: a boolean is a small `[ on ]` / `[ off ]` toggle, a choice keeps `value ▾`.
-- If the terminal is too narrow to place the pane, a toast says so and the band lists the sections (header buttons, at most as many rows as the band may take, and a `Close` button) instead.
+- If the terminal is too narrow to place the pane, a toast says so and the band lists the sections (header buttons, at most as many rows as the band may take, and a `Close` button, since the engine draws no close mark there) instead.
 - `[-]` at the end of the band (drawn by Claude Code, or ctrl+x ctrl+a) folds the band.
 
 ## What appears
