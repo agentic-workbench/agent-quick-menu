@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 
 import { validateMenuFile } from './quick-menu'
 
@@ -33,6 +33,14 @@ type World = {
   self?: string
   /** Runs inside the stub's session.start, as a plugin beneath registering its commands there. */
   onStart?: () => void
+  /** The plugin `commands` belong to in `$.command.list()`; default `alpha@mk`. */
+  commandOwner?: string
+  /** `$.store.set` fails with this message. */
+  storeFails?: string
+  /** Names `$.command.list()` reports as built-in commands. */
+  builtins?: string[]
+  /** What `$.fs.stat` answers for a path, over a regular file the size of its content. */
+  stat?: Record<string, { kind?: string; isLink?: boolean; size?: number }>
   /** Delays `$.command.list()` by this many ms (a slow discovery). */
   listDelay?: number
 }
@@ -40,9 +48,14 @@ type World = {
 const MENU_FILE = '/.claude-plugin/quick-menu.json'
 
 function stub(on: any, w: World) {
+  // A real registry entry carries its scope; the fixtures leave it out when it does not matter, meaning the user scope.
+  const registry = () =>
+    Object.fromEntries(
+      Object.entries(w.registry ?? {}).map(([id, entries]) => [id, entries.map(x => ({ scope: 'user', ...x }))]),
+    )
   const files = (): Record<string, string> => ({
     ...w.files,
-    ...(w.registry && { [REGISTRY]: JSON.stringify({ version: 2, plugins: w.registry }) }),
+    ...(w.registry && { [REGISTRY]: JSON.stringify({ version: 2, plugins: registry() }) }),
   })
   const env = (): Record<string, string> => ({ HOME, ...w.env })
   on('session.start', () => (w.onStart?.(), { cwd: '/tmp' }))
@@ -55,6 +68,7 @@ function stub(on: any, w: World) {
   const store = w.store ?? new Map<string, unknown>()
   on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
+    if (w.storeFails) throw new Error(w.storeFails)
     store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }
   })
@@ -62,6 +76,10 @@ function stub(on: any, w: World) {
   on('env.get', (_$: unknown, e: { name: string }) => ({ value: env()[e.name] }))
   const isSelf = (path: string): boolean => w.self !== undefined && !(path in files()) && path.endsWith(MENU_FILE)
   on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() || isSelf(e.path) }))
+  on('fs.stat', (_$: unknown, e: { path: string }) => {
+    const content = isSelf(e.path) ? (w.self as string) : files()[e.path]
+    return { value: { kind: 'file', size: content?.length ?? 0, mtimeMs: 0, isLink: false, ...w.stat?.[e.path] } }
+  })
   on('fs.read', (_$: unknown, e: { path: string }) => {
     if (isSelf(e.path)) return { value: w.self }
     const f = files()
@@ -71,7 +89,8 @@ function stub(on: any, w: World) {
   on('command.list', async () => {
     if (w.listDelay) await new Promise(r => setTimeout(r, w.listDelay as number))
     return { value: [
-      ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin' })),
+      ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin', plugin: w.commandOwner ?? 'alpha@mk' })),
+      ...(w.builtins ?? []).map(name => ({ name, description: '', source: 'builtin' })),
       ...(w.pluginCommands ?? []).map(c => ({ description: '', source: 'plugin', ...c })),
     ] }
   })
@@ -240,11 +259,11 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /▾ FromCfgDir$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ FromCfgDir · alpha$/ })).toBeDefined()
     expect(await ui.find({ text: /installed_plugins/ })).toBeUndefined()
   })
 
-  test('the install entry is the project or local one for the cwd, else user, else the first', async ($, on) => {
+  test('the install entry is the project or local one for the cwd, else the user one, else none', async ($, on) => {
     const mixed: Record<string, unknown>[] = [
       { scope: 'project', projectPath: '/other', installPath: '/p/other' },
       { scope: 'user', installPath: '/p/user' },
@@ -265,11 +284,12 @@ describe('discovery', () => {
       await ui.unmount()
       return labels
     }
-    expect(await titles('/work')).toContain('work')
+    expect(await titles('/work')).toContain('work · alpha')
     world.registry = { 'alpha@mk': [mixed[0]!, mixed[1]!] }
-    expect(await titles('/nowhere')).toContain('user')
+    expect(await titles('/nowhere')).toContain('user · alpha')
+    // No user entry and none for this cwd: the plugin is not read from a project it was installed for elsewhere.
     world.registry = { 'alpha@mk': [mixed[0]!, mixed[2]!] }
-    expect(await titles('/nowhere')).toContain('other')
+    expect((await titles('/nowhere')).filter((t: string) => t.includes('alpha'))).toEqual([])
   })
 
   test('a builtin plugin with rows gets a settings-only section without a registry entry', async ($, on) => {
@@ -579,7 +599,7 @@ const FAV_WORLD = (extra: Partial<World> = {}): World => ({
   ...extra,
 })
 
-const textsOf = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((x: any) => x.text as string)
+const textsOf = async (ui: any): Promise<string[]> => (await ui.findAll({ type: 'Text' })).map((x: any) => x.text as string)
 
 describe('favourites', () => {
   test('pinning and unpinning writes through $.store and survives a fresh session.start', async ($, on) => {
@@ -652,7 +672,7 @@ describe('band', () => {
     { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
   ]
 
-  test('shows the menu button and favourites in order with digit hotkeys', async ($, on) => {
+  test('shows the menu button and favourites in order with digit hotkeys when bandHotkeys is on', { options: { bandHotkeys: true } }, async ($, on) => {
     const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
@@ -688,7 +708,7 @@ describe('band', () => {
     expect(sets).toMatchObject([{ key: 'alpha.flag', value: true }])
   })
 
-  test('band width counts code points and keeps 4 cells for [-]', async ($, on) => {
+  test('band width counts code points and keeps 4 cells for [-]', { options: { bandHotkeys: true } }, async ($, on) => {
     const fav = [
       { kind: 'command', plugin: 'alpha', key: 'go --all' },
       { kind: 'command', plugin: 'alpha', key: 'stop' },
@@ -707,7 +727,7 @@ describe('band', () => {
     expect(await labels(23)).toEqual(['≣ menu'])
   })
 
-  test('only command favourites get digit hotkeys', async ($, on) => {
+  test('digit hotkeys sit on own-plugin commands, at the favourite\'s fixed position', { options: { bandHotkeys: true } }, async ($, on) => {
     const store = new Map<string, unknown>([['favourites', [
       { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
       { kind: 'command', plugin: 'alpha', key: 'stop' },
@@ -717,7 +737,7 @@ describe('band', () => {
     await start($)
     const ui = await mountBand($)
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['m', undefined, '1'])
+    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['m', undefined, '2'])
   })
 
   test('the menu button opens the pane', async ($, on) => {
@@ -1102,6 +1122,7 @@ describe('live feedback round 2', () => {
         }),
       },
       commands: ['rt-status', 'rt-pull'],
+      commandOwner: 'repo-tools@mk',
     })
     await start($)
     const ui = await paneText($)
@@ -1135,9 +1156,273 @@ describe('live feedback round 2', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /▾ Quick menu$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ Quick menu · agent-quick-menu$/ })).toBeDefined()
     expect((await ui.find({ key: 'cmd:agent-quick-menu:menu:refresh' })).props.label).toBe('Refresh')
     expect(await ui.find({ key: 'cmd:agent-quick-menu:menu:' })).toBeUndefined()
     expect(await ui.find({ text: /loaded with --plugin-dir/ })).toBeUndefined()
+  })
+})
+
+const toastsOf = (on: any): string[] => {
+  const toasts: string[] = []
+  on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+  return toasts
+}
+
+describe('security: what a button runs', () => {
+  const FOREIGN = {
+    ...ALPHA,
+    files: alphaFile({
+      version: 1,
+      commands: [
+        { command: 'go', args: '--all' },
+        { command: 'clear', label: 'Clear' },
+        { command: 'beta-run', label: 'Beta' },
+      ],
+    }),
+    commands: ['go'],
+    builtins: ['clear'],
+    pluginCommands: [{ name: 'beta-run', plugin: 'beta@mk' }],
+  }
+
+  test('each command shows /command args dimmed, clipped to 60; foreign ones carry a tag', async ($, on) => {
+    const long = 'x'.repeat(100)
+    stub(on, { ...FOREIGN, files: alphaFile({ version: 1, commands: [{ command: 'go', args: long.slice(0, 90) }, { command: 'clear' }, { command: 'beta-run' }] }) })
+    await start($)
+    const ui = await paneText($)
+    const texts = await textsOf(ui)
+    const clipped = texts.find(t => t.startsWith(' /go '))!
+    expect([...clipped.trim()]).toHaveLength(60)
+    expect(clipped.endsWith('…')).toBe(true)
+    expect(texts).toContain(' /clear')
+    expect(texts).toContain(' runs a built-in')
+    expect(texts).toContain(' runs beta')
+    expect(texts.filter(t => t.includes('runs ')).length).toBe(2)
+  })
+
+  test('a built-in or another plugin\'s command needs a second press within 5 s, in the pane and the band', async ($, on) => {
+    const clock = mock.clock(on)
+    const calls: { command: string }[] = []
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'clear' }]]])
+    stub(on, { ...FOREIGN, store, run: e => (calls.push(e), { text: 'ok' }) })
+    emptyBase(on)
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'cmd:alpha:clear:' })
+    expect(calls).toHaveLength(0)
+    expect((await ui.find({ key: 'cmd:alpha:clear:' })).props.label).toBe('press again: /clear')
+    const band = await mountBand($)
+    expect((await band.find({ key: 'band:1' })).props.label).toBe('press again: /clear')
+    await ui.press({ key: 'cmd:alpha:clear:' })
+    await clock.settle()
+    expect(calls).toMatchObject([{ command: 'clear' }])
+    expect((await ui.find({ key: 'cmd:alpha:clear:' })).props.label).toBe('Clear')
+    // Armed in the band, run from the band; after 5 s the arming is gone.
+    await band.press({ key: 'band:1' })
+    expect(calls).toHaveLength(1)
+    await clock.advance(5001)
+    await band.press({ key: 'band:1' })
+    expect(calls).toHaveLength(1)
+    await band.press({ key: 'band:1' })
+    await clock.settle()
+    expect(calls).toHaveLength(2)
+  })
+
+  test('a plugin\'s own command runs on one press', async ($, on) => {
+    const calls: { command: string }[] = []
+    stub(on, { ...FOREIGN, run: e => (calls.push(e), { text: 'ok' }) })
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'cmd:alpha:go:--all' })
+    expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
+  })
+})
+
+describe('security: menu file input', () => {
+  const bad = (o: unknown) => validateMenuFile({ version: 1, ...(o as object) })
+
+  test('control, line, bidi and zero-width characters are rejected in every string', () => {
+    for (const ch of ['\n', '\u0007', '\u2028', '\u202e', '\u200b', '\u2066', '\ufeff']) {
+      expect(bad({ title: `a${ch}b` })).toMatchObject({ ok: false })
+      expect(bad({ commands: [{ command: `a${ch}b` }] })).toMatchObject({ ok: false })
+      expect(bad({ commands: [{ command: 'a', label: `a${ch}b` }] })).toMatchObject({ ok: false })
+      expect(bad({ commands: [{ command: 'a', args: `a${ch}b` }] })).toMatchObject({ ok: false })
+      expect(bad({ commands: [{ command: 'a', description: `a${ch}b` }] })).toMatchObject({ ok: false })
+    }
+  })
+
+  test('length limits and counts', () => {
+    const ok = (n: number) => 'x'.repeat(n)
+    expect(bad({ title: ok(60) })).toMatchObject({ ok: true })
+    expect(bad({ title: ok(61) })).toMatchObject({ ok: false })
+    expect(bad({ commands: [{ command: ok(64), label: ok(40), args: ok(500), description: ok(200) }] })).toMatchObject({ ok: true })
+    for (const c of [{ command: ok(65) }, { command: 'a', label: ok(41) }, { command: 'a', args: ok(501) }, { command: 'a', description: ok(201) }]) {
+      expect(bad({ commands: [c] })).toMatchObject({ ok: false })
+    }
+    expect(bad({ commands: [{ command: 'a', label: '   ' }] })).toMatchObject({ ok: false })
+    expect(bad({ commands: Array.from({ length: 50 }, () => ({ command: 'a' })) })).toMatchObject({ ok: true })
+    expect(bad({ commands: Array.from({ length: 51 }, () => ({ command: 'a' })) })).toMatchObject({ ok: false })
+    expect(bad({ settings: Array.from({ length: 51 }, () => 's') })).toMatchObject({ ok: false })
+  })
+
+  test('titles may not pose as the menu, Claude Code or another plugin', () => {
+    for (const t of ['Claude Code', 'favourites', 'BUILT-IN']) expect(bad({ title: t })).toMatchObject({ ok: false })
+    expect(validateMenuFile({ version: 1, title: 'Beta' }, ['beta'])).toMatchObject({ ok: false })
+    expect(validateMenuFile({ version: 1, title: 'Alpha' }, ['beta'])).toMatchObject({ ok: true })
+  })
+
+  test('problems are generic for bad JSON, clipped to 300 and free of bad characters; the version echo is clipped', async ($, on) => {
+    stub(on, {
+      enabled: { 'a@m': true, 'b@m': true, 'c@m': true },
+      registry: { 'a@m': [{ installPath: '/p/a' }], 'b@m': [{ installPath: '/p/b' }], 'c@m': [{ installPath: '/p/c' }] },
+      files: {
+        '/p/a/.claude-plugin/quick-menu.json': '{"version": 1, "secret": oops',
+        '/p/b/.claude-plugin/quick-menu.json': file({ version: 'v'.repeat(500) }),
+        '/p/c/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'a\u202eb' }] }),
+      },
+    })
+    await start($)
+    const ui = await paneText($)
+    const lines = (await textsOf(ui)).filter(t => t.includes('quick-menu.json'))
+    expect(lines).toHaveLength(3)
+    expect(lines.every(t => t.length <= 300 + 20 && !/[\u202e]/.test(t))).toBe(true)
+    expect(lines.find(t => t.includes('/p/a/'))).toMatch(/not valid JSON$/)
+    expect(lines.find(t => t.includes('/p/a/'))).not.toMatch(/oops|secret/)
+    expect(lines.find(t => t.includes('/p/b/'))!.length).toBeLessThan(150)
+  })
+
+  test('the file must be a regular file, not a link, of at most 64 KiB; the rest is skipped with a problem', async ($, on) => {
+    const path = (n: string) => `/p/${n}/.claude-plugin/quick-menu.json`
+    stub(on, {
+      enabled: { 'a@m': true, 'b@m': true, 'c@m': true },
+      registry: { 'a@m': [{ installPath: '/p/a' }], 'b@m': [{ installPath: '/p/b' }], 'c@m': [{ installPath: '/p/c' }] },
+      files: { [path('a')]: file({ version: 1, title: 'A' }), [path('b')]: file({ version: 1, title: 'B' }), [path('c')]: file({ version: 1, title: 'C' }) },
+      stat: { [path('a')]: { isLink: true }, [path('b')]: { size: 64 * 1024 + 1 }, [path('c')]: { kind: 'dir' } },
+    })
+    await start($)
+    const ui = await paneText($)
+    const texts = await textsOf(ui)
+    expect(texts.filter(t => /regular file|larger than 64 KiB/.test(t))).toHaveLength(3)
+    expect(await ui.find({ text: /▾ [ABC] · / })).toBeUndefined()
+  })
+
+  test('at most 30 commands are drawn per section, then "+k more"', async ($, on) => {
+    const commands = Array.from({ length: 35 }, (_, i) => ({ command: `c${i}` }))
+    stub(on, { ...ALPHA, files: alphaFile({ version: 1, commands }), commands: commands.map(c => c.command) })
+    await start($)
+    const ui = await paneText($)
+    expect(await realButtons(ui)).toHaveLength(30)
+    expect(await textsOf(ui)).toContain('+5 more')
+  })
+
+  test('a title that differs from the plugin name is shown with it', async ($, on) => {
+    stub(on, { ...ALPHA, files: alphaFile({ version: 1, title: 'Fancy' }) })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ Fancy · alpha$/ })).toBeDefined()
+  })
+})
+
+describe('security: digit hotkeys', () => {
+  const favs = [
+    { kind: 'command', plugin: 'alpha', key: 'gone' },
+    { kind: 'command', plugin: 'alpha', key: 'clear' },
+    { kind: 'command', plugin: 'alpha', key: 'go --all' },
+  ]
+  const world = (): World => ({
+    ...ALPHA,
+    files: alphaFile({ version: 1, commands: [{ command: 'go', args: '--all' }, { command: 'clear' }] }),
+    commands: ['go'],
+    builtins: ['clear'],
+    store: new Map<string, unknown>([['favourites', favs]]),
+  })
+
+  test('off by default', async ($, on) => {
+    stub(on, world())
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.hotkey)).toEqual(['m', undefined, undefined])
+  })
+
+  test('on: the digit is the pinned position, gaps and foreign commands included', { options: { bandHotkeys: true } }, async ($, on) => {
+    stub(on, world())
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($)
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
+      ['≣ menu', 'm'],
+      ['clear', undefined],
+      ['go', '3'],
+    ])
+  })
+})
+
+describe('security: paths', () => {
+  test('a relative installPath is skipped with a problem', async ($, on) => {
+    stub(on, { ...ALPHA, registry: { 'alpha@mk': [{ installPath: 'p/alpha' }] }, files: alphaFile({ version: 1, title: 'Alpha' }) })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ Alpha/ })).toBeUndefined()
+    expect(await ui.find({ text: /installPath is not absolute/ })).toBeDefined()
+  })
+
+  test('a relative CLAUDE_CONFIG_DIR skips the registry with a problem', async ($, on) => {
+    stub(on, { enabled: { 'alpha@mk': true }, env: { CLAUDE_CONFIG_DIR: 'cfg' } })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /CLAUDE_CONFIG_DIR: must be an absolute path/ })).toBeDefined()
+  })
+
+  test('no HOME skips the registry without a problem line', async ($, on) => {
+    stub(on, { ...ALPHA, env: { HOME: '' }, files: alphaFile({ version: 1, title: 'Alpha' }) })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ Alpha/ })).toBeUndefined()
+    expect(await ui.find({ text: /Problems/ })).toBeUndefined()
+  })
+
+  test('a relative CLAUDE_CODE_PLUGIN_DIRS root is a problem, not read', async ($, on) => {
+    stub(on, { registry: {}, env: { CLAUDE_CODE_PLUGIN_DIRS: 'rel/dir' } })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /rel\/dir: cannot identify plugin dir: not an absolute path/ })).toBeDefined()
+  })
+})
+
+describe('security: favourites and the store', () => {
+  test('at most 50 favourites; the 51st press toasts', async ($, on) => {
+    const toasts = toastsOf(on)
+    const full = Array.from({ length: 50 }, (_, i) => ({ kind: 'command', plugin: 'alpha', key: `k${i}` }))
+    const store = new Map<string, unknown>([['favourites', full]])
+    stub(on, FAV_WORLD({ store }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'star:cmd:alpha:go:--all' })
+    expect((store.get('favourites') as unknown[]).length).toBe(50)
+    expect(toasts.join('\n')).toMatch(/at most 50 favourites/)
+  })
+
+  test('a failing $.store.set toasts instead of throwing, for a pin and for a fold', async ($, on) => {
+    const toasts = toastsOf(on)
+    const w = FAV_WORLD()
+    stub(on, w)
+    await start($)
+    const ui = await paneText($)
+    w.storeFails = 'disk full'
+    await ui.press({ key: 'star:cmd:alpha:go:--all' })
+    await ui.press({ key: 'collapse-all' })
+    expect(toasts.filter(t => /cannot save favourites: /.test(t))).toHaveLength(1)
+    expect(toasts.filter(t => /cannot save folded: /.test(t))).toHaveLength(1)
+    expect(await ui.find({ key: 'fav:cmd:alpha:go:--all' })).toBeUndefined()
+  })
+
+  test('a row marked sensitive shows •••• and offers only an overwrite', async ($, on) => {
+    stub(on, { ...ALPHA, files: alphaFile({ version: 1 }), rows: [row('alpha.token', { value: 'hunter2', sensitive: true })] })
+    await start($)
+    const ui = await paneText($)
+    const input = await ui.find({ key: 'set:alpha.token' })
+    expect(input.props.value).toBe('')
+    expect(JSON.stringify(await ui.find({}))).not.toMatch(/hunter2/)
   })
 })

@@ -24,6 +24,9 @@ export type SectionCommand = {
   args?: string
   description?: string
   isAvailable: boolean
+  /** From `$.command.list()`: where the command comes from and, for a plugin's, which plugin (no `@marketplace`). */
+  source?: 'builtin' | 'plugin' | 'user' | 'mcp'
+  owner?: string
 }
 
 /** One plugin's section: `file` when its menu file was read, `config` when only `userConfig` rows exist, `commands` when only its registered commands are known (loaded with `--plugin-dir`). */
@@ -46,6 +49,8 @@ export type MenuProblem = { plugin: string; message: string }
 export type RowState = {
   queued: Record<string, true>
   notes: Record<string, { kind: 'deny' | 'error'; text: string }>
+  /** The command whose button was pressed once and waits for the confirming press until `until` (`$.clock.now()` ms). */
+  armed: { id: string; until: number }
 }
 
 /** A pinned command (key: command plus args) or setting (key: config key) of the plugin. */

@@ -16,34 +16,72 @@ const unplaced = atom({ plugin: 'agent-quick-menu', key: 'unplaced' } as const, 
 const filter = atom({ plugin: 'agent-quick-menu', key: 'filter' } as const, '')
 const openChoice = atom({ plugin: 'agent-quick-menu', key: 'openChoice' } as const, '')
 
+/** Limits on a menu file (a plugin's text, so untrusted); the schema mirrors them. */
+const MAX_FILE_BYTES = 64 * 1024
+const MAX_COMMANDS = 50
+const MAX_SETTINGS = 50
+const MAX_FAVOURITES = 50
+const MAX_SHOWN_COMMANDS = 30
+const MAX_PROBLEM = 300
+const CONFIRM_MS = 5000
+const LIMITS = { title: 60, label: 40, command: 64, args: 500, description: 200 } as const
+/** Control, line, bidi and zero-width characters: never shown, never accepted. */
+const BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/
+const BAD_CHARS_ALL = new RegExp(BAD_CHARS.source, 'g')
+const RESERVED_TITLES = ['claude code', 'favourites', 'built-in']
+
+/** Text from outside, safe to show: bad characters replaced, cut to `max`. */
+const clean = (text: string, max = MAX_PROBLEM): string => text.replace(BAD_CHARS_ALL, '?').slice(0, max)
+
+/** A path the engine's registry or the environment names must be absolute. */
+const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p)
+
 type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** Why `value` is not an acceptable menu string, or null. A lone `label` or `command` must hold more than blanks. */
+function textError(where: string, value: unknown, max: number, nonBlank = false): string | null {
+  if (typeof value !== 'string') return `${where} must be a ${nonBlank ? 'non-empty ' : ''}string`
+  if (nonBlank && value.trim() === '') return `${where} must be a non-empty string`
+  if (BAD_CHARS.test(value)) return `${where} holds a control, line-break, bidi or zero-width character`
+  if (value.length > max) return `${where} is longer than ${max} characters`
+  return null
+}
+
 function validateCommand(c: unknown, i: number): { ok: true; value: MenuCommand } | { ok: false; error: string } {
   if (!isObject(c)) return { ok: false, error: `commands[${i}] must be an object` }
-  if (typeof c.command !== 'string' || c.command.trim() === '') {
-    return { ok: false, error: `commands[${i}].command must be a non-empty string` }
-  }
-  const value: MenuCommand = { command: c.command }
+  const bad = textError(`commands[${i}].command`, c.command, LIMITS.command, true)
+  if (bad) return { ok: false, error: bad }
+  const value: MenuCommand = { command: c.command as string }
   for (const key of ['label', 'args', 'description'] as const) {
     const field = c[key]
     if (field === undefined) continue
-    if (typeof field !== 'string') return { ok: false, error: `commands[${i}].${key} must be a string` }
-    value[key] = field
+    const error = textError(`commands[${i}].${key}`, field, LIMITS[key], key === 'label')
+    if (error) return { ok: false, error }
+    value[key] = field as string
   }
   return { ok: true, value }
 }
 
-/** Checks a parsed menu file against the convention (version 1). */
-export function validateMenuFile(json: unknown): Validation {
+/** Validates a menu file; `reserved` are the lower-cased names a title may not take (other plugins'). */
+export function validateMenuFile(json: unknown, reserved: readonly string[] = []): Validation {
   if (!isObject(json)) return { ok: false, error: 'menu file must be a JSON object' }
-  if (json.version !== 1) return { ok: false, error: `unsupported version ${JSON.stringify(json.version)} (expected 1)` }
-  if (json.title !== undefined && typeof json.title !== 'string') return { ok: false, error: 'title must be a string' }
+  if (json.version !== 1) {
+    return { ok: false, error: `unsupported version ${clean(String(JSON.stringify(json.version)), 20)} (expected 1)` }
+  }
+  if (json.title !== undefined) {
+    const bad = textError('title', json.title, LIMITS.title)
+    if (bad) return { ok: false, error: bad }
+    if ([...RESERVED_TITLES, ...reserved].includes((json.title as string).trim().toLowerCase())) {
+      return { ok: false, error: 'title is reserved (Claude Code, Favourites, built-in or another plugin)' }
+    }
+  }
   let commands: MenuCommand[] = []
   if (json.commands !== undefined) {
     if (!Array.isArray(json.commands)) return { ok: false, error: 'commands must be an array' }
+    if (json.commands.length > MAX_COMMANDS) return { ok: false, error: `commands has more than ${MAX_COMMANDS} entries` }
     commands = []
     for (const [i, c] of json.commands.entries()) {
       const r = validateCommand(c, i)
@@ -56,6 +94,7 @@ export function validateMenuFile(json: unknown): Validation {
     if (!Array.isArray(json.settings) || json.settings.some(s => typeof s !== 'string' || s === '')) {
       return { ok: false, error: 'settings must be an array of non-empty strings' }
     }
+    if (json.settings.length > MAX_SETTINGS) return { ok: false, error: `settings has more than ${MAX_SETTINGS} entries` }
     settings = [...(json.settings as string[])]
   }
   return { ok: true, value: { version: 1, title: json.title as string | undefined, commands, settings } }
@@ -78,6 +117,7 @@ let sessionCwd = ''
  * `$.state` (which outlives a reload) as well as here (which outlives a new session in the same process).
  */
 const inlineRoots = new Map<string, string>()
+let sessionStarted = false
 const inlineRootState = atom({ plugin: 'agent-quick-menu', key: 'inlineRoots' } as const, {} as Record<string, string>)
 
 /** The plugin name without its `@<marketplace>` suffix. */
@@ -88,14 +128,14 @@ const PLUGIN_DIR_NOTE = 'loaded with --plugin-dir: set CLAUDE_CODE_PLUGIN_DIRS t
 /** Plugins whose commands are not claimed by a built-in prefix or the engine. */
 const isForeign = (name: string): boolean => name !== 'engine' && !name.startsWith(BUILTIN_PREFIX)
 
-/** The install entry for this session: a project or local one for the cwd, else the user one, else the first. */
+/** The install entry for this session: a project or local one for the cwd, else the user one (no other scope applies here). */
 function chooseEntry(entries: unknown): Record<string, unknown> | undefined {
   if (!Array.isArray(entries)) return undefined
   const objects = entries.filter(isObject)
   const here = objects.find(
     x => (x.scope === 'project' || x.scope === 'local') && sessionCwd !== '' && x.projectPath === sessionCwd,
   )
-  return here ?? objects.find(x => x.scope === 'user') ?? objects[0]
+  return here ?? objects.find(x => x.scope === 'user')
 }
 
 async function registryTargets($: EngineInterface, found: MenuProblem[]): Promise<Target[]> {
@@ -110,7 +150,18 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
   }
   if (enabled.length === 0) return []
   const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
-  const base = configDir ? configDir : `${(await $.env.get('HOME')) ?? ''}/.claude`
+  let base: string
+  if (configDir) {
+    if (!isAbsolutePath(configDir)) {
+      found.push({ plugin: 'CLAUDE_CONFIG_DIR', message: 'must be an absolute path; plugin registry skipped' })
+      return []
+    }
+    base = configDir
+  } else {
+    const home = await $.env.get('HOME')
+    if (!home || !isAbsolutePath(home)) return []
+    base = `${home.replace(/\/+$/, '')}/.claude`
+  }
   const registryPath = `${base}/plugins/installed_plugins.json`
   let plugins: Record<string, unknown> = {}
   try {
@@ -123,9 +174,12 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
   const targets: Target[] = []
   for (const id of enabled) {
     const entry = chooseEntry(plugins[id])
-    if (entry && typeof entry.installPath === 'string') {
-      targets.push({ name: id.split('@')[0] ?? id, root: entry.installPath })
+    if (!entry || typeof entry.installPath !== 'string') continue
+    if (!isAbsolutePath(entry.installPath)) {
+      found.push({ plugin: bareName(id), message: 'installPath is not absolute; skipped' })
+      continue
     }
+    targets.push({ name: bareName(id), root: entry.installPath })
   }
   return targets
 }
@@ -136,6 +190,7 @@ async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Tar
   const targets: Target[] = []
   for (const root of (raw ?? '').split(':').filter(Boolean)) {
     try {
+      if (!isAbsolutePath(root)) throw new Error('not an absolute path')
       const manifest = await readJson($, `${root}/.claude-plugin/plugin.json`)
       const name = isObject(manifest) ? manifest.name : undefined
       if (typeof name !== 'string' || name === '') throw new Error('plugin.json has no name')
@@ -150,7 +205,7 @@ async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Tar
   } catch {
     kept = {}
   }
-  for (const [name, root] of [...inlineRoots, ...Object.entries(kept)]) targets.push({ name, root })
+  for (const [name, root] of [...inlineRoots, ...Object.entries(kept)]) if (isAbsolutePath(root)) targets.push({ name, root })
   return targets
 }
 
@@ -158,17 +213,29 @@ async function readMenuFile(
   $: EngineInterface,
   target: Target,
   found: MenuProblem[],
+  reserved: readonly string[],
 ): Promise<MenuFile | null> {
   const path = `${target.root}/${MENU_FILE}`
+  const problem = (text: string): null => (found.push({ plugin: target.name, message: `${path}: ${text}` }), null)
   try {
     if (!(await $.fs.exists(path))) return null
-    const result = validateMenuFile(await readJson($, path))
-    if (result.ok) return result.value
-    found.push({ plugin: target.name, message: `${path}: ${result.error}` })
+    const stat = await $.fs.stat(path)
+    if (stat.kind !== 'file' || stat.isLink) return problem('must be a regular file, not a link')
+    if (stat.size > MAX_FILE_BYTES) return problem(`larger than ${MAX_FILE_BYTES / 1024} KiB`)
+    const raw = await $.fs.read(path)
+    const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
+    if (text.length > MAX_FILE_BYTES) return problem(`larger than ${MAX_FILE_BYTES / 1024} KiB`)
+    let json: unknown
+    try {
+      json = JSON.parse(text)
+    } catch {
+      return problem('not valid JSON')
+    }
+    const result = validateMenuFile(json, reserved)
+    return result.ok ? result.value : problem(result.error)
   } catch (err) {
-    found.push({ plugin: target.name, message: `${path}: ${message(err)}` })
+    return problem(message(err))
   }
-  return null
 }
 
 /** Plugins the registry and the known roots do not explain (a `--plugin-dir` one): their registered commands, no menu file. */
@@ -185,6 +252,8 @@ function commandSections(listed: readonly CommandInfo[], targets: readonly Targe
       label: c.name,
       ...(c.description !== '' && { description: c.description }),
       isAvailable: true,
+      source: c.source,
+      owner: name,
     })
     byPlugin.set(name, list)
   }
@@ -219,21 +288,29 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
     found.push({ plugin: 'commands', message: `cannot list commands: ${message(err)}` })
   }
 
-  const available = new Set(listed.map(c => c.name))
+  const byName = new Map(listed.map(c => [c.name, c]))
   const result: MenuSection[] = []
   for (const target of targets) {
-    const file = await readMenuFile($, target, found)
+    const reserved = targets.filter(t => t.name !== target.name).map(t => bareName(t.name).toLowerCase())
+    const file = await readMenuFile($, target, found, reserved)
     if (file) {
       result.push({
         plugin: target.name,
-        title: file.title ?? target.name,
-        commands: file.commands.map(c => ({
-          command: c.command,
-          label: c.label ?? c.command,
-          ...(c.args !== undefined && { args: c.args }),
-          ...(c.description !== undefined && { description: c.description }),
-          isAvailable: available.has(c.command),
-        })),
+        title:
+          file.title === undefined || file.title.toLowerCase() === target.name.toLowerCase()
+            ? (file.title ?? target.name)
+            : `${file.title} · ${target.name}`,
+        commands: file.commands.map(c => {
+          const info = byName.get(c.command)
+          return {
+            command: c.command,
+            label: c.label ?? c.command,
+            ...(c.args !== undefined && { args: c.args }),
+            ...(c.description !== undefined && { description: c.description }),
+            isAvailable: info !== undefined,
+            ...(info && { source: info.source, ...(info.plugin !== undefined && { owner: bareName(info.plugin) }) }),
+          }
+        }),
         settings: file.settings,
         source: 'file',
       })
@@ -241,7 +318,7 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
   }
   result.push(...commandSections(listed, targets))
   result.sort((a, b) => a.title.localeCompare(b.title))
-  return { sections: result, problems: found }
+  return { sections: result, problems: found.map(p => ({ plugin: clean(p.plugin, 100), message: clean(p.message) })) }
 }
 
 let discoveryRun = 0
@@ -293,11 +370,13 @@ async function runAny($: EngineInterface, c: SectionCommand): Promise<{ text?: s
 }
 
 type Note = { kind: 'deny' | 'error'; text: string }
-type RowState = { queued: Record<string, true>; notes: Record<string, Note> }
+type RowState = { queued: Record<string, true>; notes: Record<string, Note>; armed: { id: string; until: number } }
+const DISARMED = { id: '', until: 0 }
 
 const rowState = atom({ plugin: 'agent-quick-menu', key: 'rowState' } as const, {
   queued: {},
   notes: {},
+  armed: DISARMED,
 } as RowState)
 
 const commandKey = (plugin: string, c: SectionCommand): string => `cmd:${plugin}:${c.command}:${c.args ?? ''}`
@@ -321,6 +400,42 @@ async function setQueued($: EngineInterface, id: string, isQueued: boolean): Pro
     else delete queued[id]
     return { ...s, queued }
   })
+}
+
+/** Who a command belongs to, when that is not the section's own plugin: the tag shown beside it and the reason to confirm. */
+function runsTag(plugin: string, c: SectionCommand): string | null {
+  if (!c.isAvailable) return null
+  if (c.source === 'plugin' && c.owner !== undefined && c.owner === bareName(plugin)) return null
+  if (c.source === 'builtin') return 'runs a built-in'
+  if (c.source === 'plugin' && c.owner !== undefined) return `runs ${c.owner}`
+  if (c.source === 'user') return 'runs a user command'
+  if (c.source === 'mcp') return 'runs an MCP command'
+  return 'runs a command of unknown origin'
+}
+
+/**
+ * A press on a button. A command of another plugin or a built-in first arms (the button reads "press again: /x") and runs
+ * on a second press within 5 s, in the pane or the band alike.
+ */
+async function pressCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
+  if (runsTag(plugin, c) !== null) {
+    const id = commandKey(plugin, c)
+    const now = await $.clock.now()
+    const armed = (await read($, rowState)).armed
+    if (armed.id !== id || now >= armed.until) {
+      const until = now + CONFIRM_MS
+      await update($, rowState, st => ({ ...st, armed: { id, until } }))
+      $.clock.after(CONFIRM_MS, () => {
+        void update($, rowState, st => (st.armed.id === id && st.armed.until === until ? { ...st, armed: DISARMED } : st)).then(() =>
+          $.ui.invalidate('ui.render'),
+        )
+      })
+      $.ui.invalidate('ui.render')
+      return
+    }
+    await update($, rowState, st => ({ ...st, armed: DISARMED }))
+  }
+  await runCommand($, plugin, c)
 }
 
 async function runCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
@@ -404,7 +519,7 @@ function isFavourites(v: unknown): v is Favourite[] {
 async function storedFavourites($: EngineInterface): Promise<Favourite[]> {
   try {
     const stored: unknown = await $.store.get('favourites')
-    return isFavourites(stored) ? stored : []
+    return isFavourites(stored) ? stored.slice(0, MAX_FAVOURITES) : []
   } catch {
     return []
   }
@@ -415,10 +530,26 @@ async function loadFavourites($: EngineInterface): Promise<void> {
   await update($, favourites, () => stored)
 }
 
+/** Writes `$.store`; a failure toasts and answers false. */
+async function saveStore($: EngineInterface, key: string, value: unknown): Promise<boolean> {
+  try {
+    await $.store.set(key, value)
+    return true
+  } catch (err) {
+    $.ui.toast(toastLine(`Quick menu: cannot save ${key}: ${message(err)}`))
+    return false
+  }
+}
+
 async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> {
   const list = await storedFavourites($)
-  const changed = isFavourite(list, f) ? list.filter(x => !sameFav(x, f)) : [...list, f]
-  await $.store.set('favourites', changed)
+  const pinned = isFavourite(list, f)
+  if (!pinned && list.length >= MAX_FAVOURITES) {
+    $.ui.toast(`Quick menu: at most ${MAX_FAVOURITES} favourites`)
+    return
+  }
+  const changed = pinned ? list.filter(x => !sameFav(x, f)) : [...list, f]
+  if (!(await saveStore($, 'favourites', changed))) return
   await update($, favourites, () => changed)
   $.ui.invalidate('ui.render')
 }
@@ -440,6 +571,9 @@ function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: F
   )
 }
 
+/** Cut to `max` characters, ending in an ellipsis. */
+const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+
 const pad = (text: string, to: number): string => text + ' '.repeat(Math.max(0, to - width(text)))
 
 function renderSetting(
@@ -454,11 +588,26 @@ function renderSetting(
   const { Select, Input } = ui as Partial<Pick<Elements['terminal'], 'Select' | 'Input'>>
   const id = fav.prefix + settingKey(row.key)
   const note = notes[settingKey(row.key)]
-  const shown = Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
+  // 2.1.288 lists no secret rows (`userConfig` secrets stay in secure storage); should a row ever say it is sensitive, its value is masked and only overwritten.
+  const isSecret = (row as { sensitive?: unknown }).sensitive === true
+  const shown = isSecret ? '••••' : Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
   const label = pad(row.label, fav.pad)
   let control
   if (row.isLocked) {
     control = <Text key={id} dimColor>{`${label}  ${shown}  managed`}</Text>
+  } else if (isSecret) {
+    control =
+      Input && fav.hasFields ? (
+        <Input
+          key={id}
+          label={`${label}  `}
+          value=""
+          placeholder="••••  (type a new value)"
+          onSubmit={(value: string) => void (value === '' ? undefined : writeSetting($, row, value))}
+        />
+      ) : (
+        <Text key={id}>{`${label}  ${shown}`}</Text>
+      )
   } else if (row.kind === 'boolean') {
     control = (
       <Box key={`bool:${id}`} flexDirection="row">
@@ -519,15 +668,23 @@ function renderCommand(
   const { Box, Text, Button } = ui
   const rid = commandKey(plugin, c)
   const id = fav.prefix + rid
+  const tag = runsTag(plugin, c)
+  const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, 60)
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
       <Text> </Text>
       {c.isAvailable ? (
-        <Button key={id} label={c.label} onPress={() => void runCommand($, plugin, c)} />
+        <Button
+          key={id}
+          label={tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label}
+          onPress={() => void pressCommand($, plugin, c)}
+        />
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
+      {c.isAvailable && <Text dimColor>{` ${runs}`}</Text>}
+      {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
       {state.queued[rid] && <Text dimColor> queued</Text>}
     </Box>
   )
@@ -638,7 +795,7 @@ async function loadFolds($: EngineInterface): Promise<void> {
 
 async function writeFolds($: EngineInterface, change: (stored: Record<string, boolean>) => Record<string, boolean>): Promise<void> {
   const next = change(await storedFolds($))
-  await $.store.set('folded', next)
+  if (!(await saveStore($, 'folded', next))) return
   await update($, folded, () => next)
   $.ui.invalidate('ui.render')
 }
@@ -740,7 +897,10 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
       ...(b.commands.length > 0
         ? [
             <Box key="commands" flexDirection="row" flexWrap="wrap" columnGap={2}>
-              {b.commands.map(c => renderCommand($, ui, b.plugin, c, d.state, fav('')))}
+              {b.commands.slice(0, MAX_SHOWN_COMMANDS).map(c => renderCommand($, ui, b.plugin, c, d.state, fav('')))}
+              {b.commands.length > MAX_SHOWN_COMMANDS && (
+                <Text key="more" dimColor>{`+${b.commands.length - MAX_SHOWN_COMMANDS} more`}</Text>
+              )}
             </Box>,
           ]
         : []),
@@ -825,7 +985,7 @@ type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
 /** The band's menu button. */
 export const MENU_LABEL = '≣ menu'
 
-type BandItem = { label: string; onPress: () => void; isCommand: boolean; digit?: number }
+type BandItem = { label: string; onPress: () => void; isOwn: boolean; digit?: number }
 
 /** Display width of a label in cells: code points, not UTF-16 units. */
 function width(text: string): number {
@@ -837,11 +997,18 @@ function bandItem(
   f: Favourite,
   found: readonly MenuSection[],
   rows: readonly ConfigRow[],
+  state: RowState,
 ): BandItem | null {
   if (f.kind === 'command') {
     const c = findFavCommand(f, found)
     if (!c || !c.isAvailable) return null
-    return { label: c.label, onPress: () => void runCommand($, f.plugin, c), isCommand: true }
+    const tag = runsTag(f.plugin, c)
+    const armed = tag !== null && state.armed.id === commandKey(f.plugin, c)
+    return {
+      label: armed ? `press again: /${clip(c.command, 64)}` : c.label,
+      onPress: () => void pressCommand($, f.plugin, c),
+      isOwn: tag === null,
+    }
   }
   const r = rows.find(x => x.key === f.key)
   if (!r) return null
@@ -849,10 +1016,10 @@ function bandItem(
     return {
       label: `${r.label}: ${r.value ? 'on' : 'off'}`,
       onPress: () => void writeSetting($, r, !r.value),
-      isCommand: false,
+      isOwn: false,
     }
   }
-  return { label: r.label, onPress: () => void openPane($), isCommand: false }
+  return { label: r.label, onPress: () => void openPane($), isOwn: false }
 }
 
 /** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
@@ -898,11 +1065,11 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
   // The menu button takes its label plus 5 cells, the divider 2, a plain button its label, 3 for a digit and 2 apart; 4 stay free for the engine's `[-]`.
   let used = width(menuLabel) + 5 + 2 + 4
   const items: BandItem[] = []
-  for (const f of d.favs) {
-    const item = bandItem($, f, d.all, d.rows)
+  for (const [position, f] of d.favs.entries()) {
+    const item = bandItem($, f, d.all, d.rows, d.state)
     if (!item) continue
-    const digits = items.filter(x => x.isCommand).length
-    const digit = item.isCommand && digits < 9 ? digits + 1 : undefined
+    // The digit is the favourite's own place in the pinned list, so a gap never renumbers the others.
+    const digit = bandHotkeys && item.isOwn && position < 9 ? position + 1 : undefined
     used += width(item.label) + (digit === undefined ? 0 : 3) + 2
     if (used > e.props.bodyColumns) break
     items.push(digit === undefined ? item : { ...item, digit })
@@ -930,7 +1097,11 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
   )
 }
 
-export const register: Register = on => {
+/** The `bandHotkeys` option: digit hotkeys on the band's own-plugin commands; off unless the person turns it on. */
+let bandHotkeys = false
+
+export const register: Register = (on, options) => {
+  bandHotkeys = options.bandHotkeys === true
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)
@@ -941,7 +1112,13 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     sessionCwd = e.cwd
-    await update($, rowState, () => ({ queued: {}, notes: {} }))
+    // A module instance that sees a second session.start is in a new session, not a reload (a reload makes a new instance).
+    if (sessionStarted) {
+      inlineRoots.clear()
+      await update($, inlineRootState, () => ({}))
+    }
+    sessionStarted = true
+    await update($, rowState, () => ({ queued: {}, notes: {}, armed: DISARMED }))
     await update($, unplaced, () => false)
     await update($, filter, () => '')
     await update($, openChoice, () => '')
