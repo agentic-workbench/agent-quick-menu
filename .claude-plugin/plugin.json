@@ -1,7 +1,7 @@
 {
   "name": "agent-quick-menu",
   "version": "0.1.7",
-  "description": "Quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.",
+  "description": "A pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.",
   "author": {
     "name": "dasganni",
     "url": "https://github.com/dasganni"

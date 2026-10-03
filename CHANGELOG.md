@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- Commands are listed one per line, aligned like the settings table: star, button, the dim `/command args` hint, then the dim description clipped to the width. The foreign/built-in tag, the confirm-twice label and the "+k more" cap stay.
+- A boolean setting shows a green `● on` or a gray `○ off`.
+- Section titles are bold cyan; counts and the `built-in` tag are dim. The fold chevron is its own button beside the title. A pinned star is undimmed, an unpinned one dim (a Button label cannot take a colour).
+- Colours that carry meaning are named (`green`, `gray`, `cyan`, `red`) rather than theme keys, which rendered pale in some terminals.
+- The description in `plugin.json`, `marketplace.json` and the README is narrowed to what the plugin does: a pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.
+
 ## [0.1.7] - 2026-10-03
 
 ### Fixed

@@ -573,8 +573,8 @@ async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> 
   $.ui.invalidate('ui.render')
 }
 
-/** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label. */
-type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; openChoice: string; columns: number }
+/** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label; `cmdPad`: its longest command label. */
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number; cmdPad: number; openChoice: string; columns: number }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
@@ -584,7 +584,7 @@ function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: F
       key={`${fav.prefix}star:${id}`}
       label={pinned ? '★' : '☆'}
       plain
-      dimColor
+      {...(pinned ? {} : { dimColor: true })}
       onPress={() => void toggleFavourite($, f)}
     />
   )
@@ -633,7 +633,9 @@ function renderSetting(
     control = (
       <Box key={`bool:${id}`} flexDirection="row">
         <Text>{`${label}  `}</Text>
-        <Button key={id} label={row.value ? 'on' : 'off'} onPress={() => void writeSetting($, row, !row.value)} />
+        {row.value ? <Text color="green">●</Text> : <Text color="gray">○</Text>}
+        <Text> </Text>
+        <Button key={id} label={row.value ? 'on' : 'off'} plain onPress={() => void writeSetting($, row, !row.value)} />
       </Box>
     )
   } else if (row.kind === 'choice' && row.options && row.options.length > 0 && Select && fav.hasFields) {
@@ -695,7 +697,7 @@ function renderCommand(
   const tag = runsTag(plugin, c)
   const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, 60)
   // The help text takes what is left of the line after star, button, hint and tag; with under 8 cells left it is dropped.
-  const used = 2 + width(c.label) + 4 + 1 + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
+  const used = 2 + Math.max(fav.cmdPad, width(c.label)) + 4 + 2 + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
   const room = fav.columns - used - 1
   const help = c.isAvailable && c.description && room >= 8 ? clip(c.description, room) : null
   return (
@@ -711,7 +713,8 @@ function renderCommand(
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
-      {c.isAvailable && <Text dimColor>{` ${runs}`}</Text>}
+      {c.isAvailable && <Text>{' '.repeat(Math.max(0, fav.cmdPad - width(c.label)) + 2)}</Text>}
+      {c.isAvailable && <Text dimColor>{runs}</Text>}
       {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
       {help !== null && <Text dimColor>{` ${help}`}</Text>}
       {state.queued[rid] && <Text dimColor> queued</Text>}
@@ -900,11 +903,11 @@ function summaryOf(b: Block): string {
   ].join(' · ')
 }
 
-/** Rows a block takes: its header, plus a wrapped command row (counted as one) and a row per setting when open. */
+/** Rows a block takes: its header, a row per shown command (plus the "more" line) and a row per setting when open. */
 function blockRows(b: Block, isOpen: boolean): number {
   if (!isOpen) return 1
   if (b.favs) return 1 + b.favs.length
-  return 1 + (b.note ? 1 : 0) + (b.commands.length > 0 ? 1 : 0) + b.rows.length
+  return 1 + (b.note ? 1 : 0) + Math.min(b.commands.length, MAX_SHOWN_COMMANDS) + (b.commands.length > MAX_SHOWN_COMMANDS ? 1 : 0) + b.rows.length
 }
 
 function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true, columns = 0) {
@@ -914,7 +917,11 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
     ? b.favs.flatMap(f => (f.kind === 'setting' ? d.rows.filter(r => r.key === f.key) : []))
     : b.rows
   const widest = Math.max(0, ...labelRows.map(r => width(r.label)))
-  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, openChoice: d.openChoice, columns })
+  const cmdLabels = b.favs
+    ? b.favs.flatMap(f => (f.kind === 'command' ? [findFavCommand(f, d.all)?.label ?? ''] : []))
+    : b.commands.slice(0, MAX_SHOWN_COMMANDS).map(c => c.label)
+  const cmdPad = Math.max(0, ...cmdLabels.map(l => width(l)))
+  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest, cmdPad, openChoice: d.openChoice, columns })
   let body: RenderNode[] | null = null
   if (!showBody) {
     body = null
@@ -925,7 +932,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
       ...(b.note ? [<Text key={`note:${b.id}`} dimColor>{b.note}</Text>] : []),
       ...(b.commands.length > 0
         ? [
-            <Box key="commands" flexDirection="row" flexWrap="wrap" columnGap={2}>
+            <Box key="commands" flexDirection="column">
               {b.commands.slice(0, MAX_SHOWN_COMMANDS).map(c => renderCommand($, ui, b.plugin, c, d.state, fav('')))}
               {b.commands.length > MAX_SHOWN_COMMANDS && (
                 <Text key="more" dimColor>{`+${b.commands.length - MAX_SHOWN_COMMANDS} more`}</Text>
@@ -941,10 +948,11 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
       <Box flexDirection="row" columnGap={2}>
         <Button
           key={`fold:${b.id}`}
-          label={`${isOpen ? '▾' : '▸'} ${b.title}`}
-          variant="primary"
+          label={isOpen ? '▾' : '▸'}
+          plain
           onPress={() => void toggleFold($, b.id)}
         />
+        <Text bold color="cyan">{b.title}</Text>
         {b.isBuiltIn && <Text dimColor>built-in</Text>}
         <Text dimColor>{summaryOf(b)}</Text>
       </Box>

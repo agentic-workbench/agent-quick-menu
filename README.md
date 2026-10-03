@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/github/license/agentic-workbench/agent-quick-menu)](LICENSE)
 [![CI](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml/badge.svg)](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml)
 
-A quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.
+A pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.
 
 ![The quick menu pane beside the transcript, and the menu button in the band above the prompt](docs/screenshot.png)
 
@@ -45,7 +45,7 @@ Then run `/reload-plugins` in a running session.
 
 ## What appears
 
-- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands as a wrapping row of buttons and its settings (`userConfig`) as an aligned label/value table.
+- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands one per line (button, then the `/command args` hint) and its settings (`userConfig`) as an aligned label/value table.
 - A commands-only section for a plugin loaded with `--plugin-dir` whose root is not known (see Limitations): its registered commands, and a dim line saying to set `CLAUDE_CODE_PLUGIN_DIRS`.
 - A settings-only section for each plugin without the file that has `userConfig` rows.
 - A "Claude Code" section with Claude Code's own settings.
