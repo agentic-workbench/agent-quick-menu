@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-10-03
+
 ### Added
 
 - Optional `ask` on a command entry (`placeholder`, `default`): pressing it opens the row editor with the default typed in and `✓ run` / `✕ cancel`, and runs `/command <args> <input>`. A band favourite with `ask` opens the pane at its row with the editor open. The input is one line without control, bidi or zero-width characters, at most 500; the confirm-twice of a foreign command applies to `✓ run`. Format version stays 1.
@@ -133,7 +135,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.9...v0.1.10
