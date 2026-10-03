@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Fixed
+
+- A `choice` setting opens an inline row of option Buttons (`● current`, `○ other`) that can be clicked or Entered, instead of a Select list; the stray `:` before the value is gone, and picking the current option only collapses the row without writing.
+
 ## [0.1.12] - 2026-10-03
 
 ### Added

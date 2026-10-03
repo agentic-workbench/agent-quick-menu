@@ -529,7 +529,8 @@ async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigVal
     const result = await $.command.run({ command: 'config', args: `${row.key}=${configArg(value)}` })
     // `/config` answers a refusal as text, not as an error; a write reads "Set <label> to <value>".
     const text = (result.text ?? '').trim()
-    if (!text.startsWith('Set ')) await setNote($, id, { kind: 'deny', text: text || 'not changed' })
+    // An unchanged value is answered as text too ("not changed", "already ..."); that is no refusal.
+    if (!text.startsWith('Set ') && !/not changed|already/i.test(text)) await setNote($, id, { kind: 'deny', text: text || 'not changed' })
   } catch (err) {
     await setNote($, id, { kind: 'error', text: message(err) })
   }
@@ -541,7 +542,7 @@ async function setOpenChoice($: EngineInterface, id: string): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
-/** A pick in an open choice row: folds the row back to `value ▾`, then writes the value. */
+/** A pick of another option in an open choice row: folds the row back to `value ▾`, then writes the value. */
 async function pickChoice($: EngineInterface, row: ConfigRow, value: string): Promise<void> {
   await setOpenChoice($, '')
   await writeSetting($, row, value)
@@ -653,7 +654,7 @@ function renderSetting(
   fav: FavCtx,
 ) {
   const { Box, Text, Button } = ui
-  const { Select, Input } = ui as Partial<Pick<Elements['terminal'], 'Select' | 'Input'>>
+  const { Input } = ui as Partial<Pick<Elements['terminal'], 'Input'>>
   const id = fav.prefix + settingKey(row.key)
   const note = notes[settingKey(row.key)]
   // 2.1.288 lists no secret rows (`userConfig` secrets stay in secure storage); should a row ever say it is sensitive, its value is masked and only overwritten.
@@ -687,26 +688,52 @@ function renderSetting(
         <Button key={id} label={row.value ? 'on' : 'off'} plain onPress={() => void writeSetting($, row, !row.value)} />
       </Box>
     )
-  } else if (row.kind === 'choice' && row.options && row.options.length > 0 && Select && fav.hasFields) {
-    // Folded to `value ▾` until pressed; the picker then takes the same key, so the focus ring stays on it, and a pick
-    // folds it again. A Select draws its option list whenever it holds the focus, so a row of them would unfold one by
-    // one as the ring passes.
-    control =
-      fav.openChoice === id ? (
-        <Select
-          key={id}
-          label={`${label}  `}
-          options={row.options.map(value => ({ value }))}
-          value={shown}
-          autoFocus
-          onSelect={(value: string) => void pickChoice($, row, value)}
-        />
-      ) : (
+  } else if (row.kind === 'choice' && row.options && row.options.length > 0 && fav.hasFields) {
+    // Folded to `value ▾`; pressed, it shows `value ▴` and a row of option Buttons (`● current`, `○ other`) after the
+    // value, or on the next line under the value column when the line is too short. The current option only folds it.
+    const open = fav.openChoice === id
+    const toggle = (
+      <Button key={id} label={`${shown} ${open ? '▴' : '▾'}`} plain onPress={() => void setOpenChoice($, open ? '' : id)} />
+    )
+    const head = (
+      <Box key={`choice:${id}`} flexDirection="row">
+        <Text>{`${label}  `}</Text>
+        {toggle}
+      </Box>
+    )
+    if (!open) {
+      control = head
+    } else {
+      const options = row.options.map(value => (
+        <Box key={`opt:${id}:${value}`} flexDirection="row">
+          <Text> </Text>
+          <Button
+            key={`${id}:${value}`}
+            label={`${value === shown ? '●' : '○'} ${value}`}
+            plain
+            onPress={() => void (value === shown ? setOpenChoice($, '') : pickChoice($, row, value))}
+          />
+        </Box>
+      ))
+      const optionsWidth = row.options.reduce((sum, value) => sum + 1 + 2 + width(value), 0)
+      const indent = 2 + width(label) + 2
+      const fits = indent + width(shown) + 2 + optionsWidth <= fav.columns
+      control = fits ? (
         <Box key={`choice:${id}`} flexDirection="row">
           <Text>{`${label}  `}</Text>
-          <Button key={id} label={`${shown} ▾`} plain onPress={() => void setOpenChoice($, id)} />
+          {toggle}
+          {options}
+        </Box>
+      ) : (
+        <Box key={`choice:${id}`} flexDirection="column">
+          {head}
+          <Box flexDirection="row">
+            <Text>{' '.repeat(indent - 2)}</Text>
+            {options}
+          </Box>
         </Box>
       )
+    }
   } else if (Input && fav.hasFields) {
     // The label is its own Text: an Input's own label draws a `: ` before the value.
     control = (
@@ -726,7 +753,7 @@ function renderSetting(
   const valueWidth = row.isLocked ? width(`${shown}  managed`) : row.kind === 'boolean' && !isSecret ? 5 + (row.value ? 0 : 1) : width(shown) + (row.kind === 'choice' ? 2 : 0)
   const used = 2 + width(label) + 2 + valueWidth + (note ? 2 + width(note.text) : 0) + 3
   const room = fav.columns - used
-  const help = row.description && room >= 8 ? clip(row.description.replace(/\s+/g, ' '), room) : null
+  const help = row.description && room >= 8 && fav.openChoice !== id ? clip(row.description.replace(/\s+/g, ' '), room) : null
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'setting', plugin, key: row.key }, settingKey(row.key), fav)}

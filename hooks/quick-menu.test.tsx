@@ -469,7 +469,7 @@ describe('settings', () => {
     const ui = await paneText($)
     await ui.press({ key: 'set:alpha.flag' })
     await ui.press({ key: 'set:alpha.mode' })
-    await ui.select({ key: 'set:alpha.mode', value: 'b' })
+    await ui.press({ key: 'set:alpha.mode:b' })
     await ui.input({ key: 'set:alpha.name', text: 'hello' })
     await ui.input({ key: 'set:alpha.count', text: '42' })
     expect(sets).toMatchObject([
@@ -480,39 +480,63 @@ describe('settings', () => {
     ])
   })
 
-  test('a choice row is folded to `value ▾`; a press opens the picker in its place and a pick folds it again', async ($, on) => {
-    const sets: unknown[] = []
-    const world = setup(
-      [
-        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b', 'c', 'd'] }),
+  test('a choice row is folded to `value ▾`; a press opens inline option Buttons, one picker at a time', async ($, on) => {
+    stub(
+      on,
+      setup([
+        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b', 'c'] }),
         row('alpha.other', { kind: 'choice', value: 'x', options: ['x', 'y'] }),
-      ],
-      { set: e => (sets.push(e), { value: e.value }) },
+      ]),
     )
+    await start($)
+    const ui = await paneText($)
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    await ui.press({ key: 'set:alpha.mode' })
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▴')
+    for (const [k, label] of [['a', '● a'], ['b', '○ b'], ['c', '○ c']]) {
+      const b = await ui.find({ key: `set:alpha.mode:${k}` })
+      expect([b.type, b.props.label]).toEqual(['Button', label])
+    }
+    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    // Opening another row folds the first.
+    await ui.press({ key: 'set:alpha.other' })
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+    expect(await ui.findAll({ key: 'set:alpha.mode:b' })).toHaveLength(0)
+    expect(await ui.findAll({ key: 'set:alpha.other:y' })).toHaveLength(1)
+  })
+
+  test('pressing the current option only collapses; another option writes once and collapses', async ($, on) => {
+    const sets: unknown[] = []
+    const world = setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], {
+      set: e => (sets.push(e), { value: e.value }),
+    })
     stub(on, world)
     await start($)
     const ui = await paneText($)
-    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
-    const folded = await ui.find({ key: 'set:alpha.mode' })
-    expect([folded.type, folded.props.label]).toEqual(['Button', 'a ▾'])
     await ui.press({ key: 'set:alpha.mode' })
-    const open = await ui.findAll({ type: 'Select' })
-    expect(open.map((x: any) => [x.key, x.props.value, x.props.options.map((o: any) => o.value)])).toEqual([
-      ['set:alpha.mode', 'a', ['a', 'b', 'c', 'd']],
-    ])
-    expect((await ui.find({ key: 'set:alpha.other' })).type).toBe('Button')
-    // Opening another row folds the first: one picker at a time.
-    await ui.press({ key: 'set:alpha.other' })
-    expect((await ui.findAll({ type: 'Select' })).map((x: any) => x.key)).toEqual(['set:alpha.other'])
+    await ui.press({ key: 'set:alpha.mode:a' })
+    expect(sets).toHaveLength(0)
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+    expect(await ui.findAll({ key: 'set:alpha.mode:b' })).toHaveLength(0)
     await ui.press({ key: 'set:alpha.mode' })
-    world.rows = [
-      row('alpha.mode', { kind: 'choice', value: 'c', options: ['a', 'b', 'c', 'd'] }),
-      row('alpha.other', { kind: 'choice', value: 'x', options: ['x', 'y'] }),
-    ]
-    await ui.select({ key: 'set:alpha.mode', value: 'c' })
-    expect(sets).toMatchObject([{ key: 'alpha.mode', value: 'c' }])
-    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
-    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('c ▾')
+    world.rows = [row('alpha.mode', { kind: 'choice', value: 'b', options: ['a', 'b'] })]
+    await ui.press({ key: 'set:alpha.mode:b' })
+    expect(sets).toMatchObject([{ key: 'alpha.mode', value: 'b' }])
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('b ▾')
+    expect(await ui.findAll({ key: 'set:alpha.mode:a' })).toHaveLength(0)
+  })
+
+  test('the toggle collapses without writing, and no colon is drawn in the row', async ($, on) => {
+    const sets: unknown[] = []
+    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set: e => (sets.push(e), { value: e.value }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.mode' })
+    expect(await ui.findAll({ text: /:/, type: 'Text' })).toHaveLength(0)
+    await ui.press({ key: 'set:alpha.mode' })
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+    expect(sets).toHaveLength(0)
   })
 
   test('on mobile, without Select and Input, choice, text and number rows are read-only text', async ($, on) => {
@@ -548,6 +572,14 @@ describe('settings', () => {
     const ui = await paneText($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+  })
+
+  test('a reply that the value is unchanged is no refusal and shows no note', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'alpha.flag is not changed' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
   })
 
   test('a text value with spaces is written bare, after the first `=`', async ($, on) => {
