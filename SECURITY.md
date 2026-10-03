@@ -20,11 +20,11 @@ Other plugins' `.claude-plugin/quick-menu.json` files decide which buttons the m
 
 ### What a press runs
 
-A button runs a slash command through Claude Code (`$.command.run`), with the command and arguments shown beside it. That includes Claude Code's built-in commands and commands of other plugins, not only the plugin's own. Such a button is tagged (`runs <plugin>`, `runs a built-in`) and needs a second press within 5 seconds (`press again: /command`), in the pane and in the band. A command it triggers may use the network. Digit hotkeys in the band exist only when you turn on the `bandHotkeys` option, and only for the plugin's own commands.
+A button runs a slash command through Claude Code (`$.command.run`), only when you press it or a band favourite, with the command and arguments shown beside it. That includes Claude Code's built-in commands and commands of other plugins, not only the plugin's own. Such a button is tagged (`runs <plugin>`, `runs a built-in`) and needs a second press within 5 seconds (`press again: /command`), in the pane and in the band. A command it triggers may use the network. Digit hotkeys in the band exist only when you turn on the `bandHotkeys` option, and only for the plugin's own commands.
 
 ### What it reads
 
-- Environment variables `HOME`, `USERPROFILE`, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_DIRS`.
+- Settings (`enabledPlugins`) and environment variables `HOME`, `USERPROFILE`, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_DIRS`.
 - The plugin registry (`installed_plugins.json` under the Claude config directory) and `enabledPlugins` from your settings.
 - `.claude-plugin/plugin.json` of the plugin folders named in `CLAUDE_CODE_PLUGIN_DIRS`, and `.claude-plugin/quick-menu.json` of each enabled plugin.
 - The roots `plugin.register` hands out for plugins loaded with `--plugin-dir`.
@@ -33,7 +33,7 @@ A button runs a slash command through Claude Code (`$.command.run`), with the co
 ### What it writes
 
 - Its own state (favourites, at most 50, and fold state) in `$.store`.
-- `/config` rows, only when you change a setting in the pane.
+- `/config` rows, only when you change a setting in the pane, by running `/config <key>=<value>` through Claude Code (`$.command.run`). It sets no environment variables.
 - Its pane state in `$.state`, which other plugins can read.
 
-It makes no network requests of its own.
+It makes no network requests of its own and reads no credentials. Its hooks: `ui.render` on `AbovePrompt` and its `Pane`, `command.run` for `/menu` only, `plugin.register` (records roots, changes nothing) and `session.start`. See "What this plugin does on your machine" in the README.

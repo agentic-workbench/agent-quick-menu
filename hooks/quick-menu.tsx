@@ -143,7 +143,7 @@ async function registryTargets($: EngineInterface, found: MenuProblem[]): Promis
   try {
     const settings = (await $.settings.read()) as { enabledPlugins?: Record<string, unknown> }
     enabled = Object.entries(settings.enabledPlugins ?? {})
-      .filter(([, on]) => on === true)
+      .filter(([, enabledFlag]) => enabledFlag === true)
       .map(([id]) => id)
   } catch (err) {
     found.push({ plugin: 'settings', message: `cannot read settings: ${message(err)}` })
@@ -336,18 +336,28 @@ async function runDiscovery($: EngineInterface): Promise<{ sections: number; pro
   return { sections: found.sections.length, problems: found.problems.length }
 }
 
-/** Starts a discovery without holding the dispatch that asked for it; `done` gets its counts, failures a toast. */
-function startDiscovery($: EngineInterface, done?: (counts: { sections: number; problems: number }) => void): void {
+function toastRefreshed($: EngineInterface, c: { sections: number; problems: number }): void {
+  $.ui.toast(`Quick menu refreshed: ${c.sections} sections, ${c.problems} problems`)
+}
+
+function toastDiscoveryFailed($: EngineInterface, err: unknown): void {
+  $.ui.toast(toastLine(`Quick menu: discovery failed: ${message(err)}`))
+}
+
+/** Starts a discovery without holding the dispatch that asked for it; `announce` toasts its counts, failures always toast. */
+function startDiscovery($: EngineInterface, announce = false): void {
   void runDiscovery($).then(
-    counts => counts && done?.(counts),
-    err => $.ui.toast(toastLine(`Quick menu: discovery failed: ${message(err)}`)),
+    counts => {
+      if (counts && announce) toastRefreshed($, counts)
+    },
+    err => toastDiscoveryFailed($, err),
   )
 }
 
 /** `/menu`: opens the pane, or starts a refresh, and answers at once; discovery runs on its own and redraws when it lands. */
 async function openMenu($: EngineInterface, args: string): Promise<{ text: string }> {
   if (args.trim() === 'refresh') {
-    startDiscovery($, c => $.ui.toast(`Quick menu refreshed: ${c.sections} sections, ${c.problems} problems`))
+    startDiscovery($, true)
     return { text: 'Quick menu: discovering plugin menus again' }
   }
   await openPane($)
@@ -415,6 +425,12 @@ function runsTag(plugin: string, c: SectionCommand): string | null {
   return 'runs a command of unknown origin'
 }
 
+/** Ends an arming that nobody confirmed in time; a newer arming stands. */
+async function disarm($: EngineInterface, id: string, until: number): Promise<void> {
+  await update($, rowState, st => (st.armed.id === id && st.armed.until === until ? { ...st, armed: DISARMED } : st))
+  $.ui.invalidate('ui.render')
+}
+
 /**
  * A press on a button. A command of another plugin or a built-in first arms (the button reads "press again: /x") and runs
  * on a second press within 5 s, in the pane or the band alike.
@@ -427,11 +443,7 @@ async function pressCommand($: EngineInterface, plugin: string, c: SectionComman
     if (armed.id !== id || now >= armed.until) {
       const until = now + CONFIRM_MS
       await update($, rowState, st => ({ ...st, armed: { id, until } }))
-      $.clock.after(CONFIRM_MS, () => {
-        void update($, rowState, st => (st.armed.id === id && st.armed.until === until ? { ...st, armed: DISARMED } : st)).then(() =>
-          $.ui.invalidate('ui.render'),
-        )
-      })
+      $.clock.after(CONFIRM_MS, () => void disarm($, id, until))
       $.ui.invalidate('ui.render')
       return
     }
@@ -462,12 +474,17 @@ async function runCommand($: EngineInterface, plugin: string, c: SectionCommand)
   }
 }
 
+/** A value as `/config key=value` takes it: bare text (quotes would become part of the value), a list comma-joined. */
+const configArg = (value: ConfigValue): string => (typeof value === 'object' ? value.join(',') : String(value))
+
 async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigValue): Promise<void> {
   const id = settingKey(row.key)
   await setNote($, id, null)
   try {
-    const result = await $.config.set({ key: row.key, value })
-    if (result.deny !== undefined) await setNote($, id, { kind: 'deny', text: result.deny })
+    const result = await $.command.run({ command: 'config', args: `${row.key}=${configArg(value)}` })
+    // `/config` answers a refusal as text, not as an error; a write reads "Set <label> to <value>".
+    const text = (result.text ?? '').trim()
+    if (!text.startsWith('Set ')) await setNote($, id, { kind: 'deny', text: text || 'not changed' })
   } catch (err) {
     await setNote($, id, { kind: 'error', text: message(err) })
   }

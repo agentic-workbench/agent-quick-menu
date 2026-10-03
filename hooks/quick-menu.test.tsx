@@ -25,7 +25,7 @@ type World = {
   pluginCommands?: { name: string; plugin: string; description?: string }[]
   rows?: Record<string, unknown>[]
   run?: (e: { command: string; args?: string }) => unknown
-  set?: (e: { key: string; value: unknown }) => unknown
+  set?: (e: { key: string; value: string }) => { value?: string; deny?: string }
   open?: (e: unknown) => void
   placed?: false
   store?: Map<string, unknown>
@@ -97,11 +97,15 @@ function stub(on: any, w: World) {
   on('config.list', () => ({ value: w.rows ?? [] }))
   on('command.run', (_$: unknown, e: { command: string; args?: string }) => {
     if (e.command === 'menu') return undefined
+    // `/config key=value`: the value arrives as bare text; a refusal is answered as text, a write as "Set <key> to <value>".
+    if (e.command === 'config') {
+      const at = (e.args ?? '').indexOf('=')
+      const set = { key: (e.args ?? '').slice(0, at), value: (e.args ?? '').slice(at + 1) }
+      const out = w.set ? w.set(set) : { value: set.value }
+      return { text: out.deny !== undefined ? out.deny : `Set ${set.key} to ${set.value}` }
+    }
     return w.run ? w.run(e) : { text: 'ok' }
   })
-  on('config.set', (_$: unknown, e: { key: string; value: unknown }) =>
-    w.set ? w.set(e) : { value: e.value },
-  )
 }
 
 async function start($: any, cwd = '/tmp') {
@@ -445,7 +449,7 @@ describe('settings', () => {
     ...extra,
   })
 
-  test('boolean toggles, choice selects, text and number inputs write via $.config.set', async ($, on) => {
+  test('boolean toggles, choice selects, text and number inputs write via `/config key=value`', async ($, on) => {
     const sets: unknown[] = []
     stub(
       on,
@@ -467,10 +471,10 @@ describe('settings', () => {
     await ui.input({ key: 'set:alpha.name', text: 'hello' })
     await ui.input({ key: 'set:alpha.count', text: '42' })
     expect(sets).toMatchObject([
-      { key: 'alpha.flag', value: true },
+      { key: 'alpha.flag', value: 'true' },
       { key: 'alpha.mode', value: 'b' },
       { key: 'alpha.name', value: 'hello' },
-      { key: 'alpha.count', value: 42 },
+      { key: 'alpha.count', value: '42' },
     ])
   })
 
@@ -542,6 +546,15 @@ describe('settings', () => {
     const ui = await paneText($)
     await ui.press({ key: 'set:alpha.flag' })
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+  })
+
+  test('a text value with spaces is written bare, after the first `=`', async ($, on) => {
+    const sets: unknown[] = []
+    stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: e => (sets.push(e), { value: e.value }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.input({ key: 'set:alpha.name', text: 'a b=c' })
+    expect(sets).toEqual([{ key: 'alpha.name', value: 'a b=c' }])
   })
 
   test('a locked row shows "managed" and has no editor', async ($, on) => {
@@ -712,7 +725,7 @@ describe('band', () => {
     expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
   })
 
-  test('a boolean favourite toggles via $.config.set', async ($, on) => {
+  test('a boolean favourite toggles via `/config key=value`', async ($, on) => {
     const sets: unknown[] = []
     const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store, set: e => (sets.push(e), { value: e.value }) }))
@@ -720,7 +733,7 @@ describe('band', () => {
     await start($)
     const ui = await mountBand($)
     await ui.press({ key: 'band:2' })
-    expect(sets).toMatchObject([{ key: 'alpha.flag', value: true }])
+    expect(sets).toMatchObject([{ key: 'alpha.flag', value: 'true' }])
   })
 
   test('band width counts code points and keeps 4 cells for [-]', { options: { bandHotkeys: true } }, async ($, on) => {

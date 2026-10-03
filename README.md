@@ -52,6 +52,22 @@ Then run `/reload-plugins` in a running session.
 - A locked row (`managed`) is set by managed policy and cannot be changed here.
 - A "Problems" list shows plugin files that were skipped and why.
 
+## What this plugin does on your machine
+
+**Slash commands it runs, and when.** Only when you press a button or a band favourite, and only the command that row shows: `/<command> <args>` from a plugin's `quick-menu.json`. Built-in commands and other plugins' commands need a second press within 5 seconds. When you change a setting row it runs `/config <key>=<value>`. It runs nothing on its own.
+
+**What it sets.** Only the `/config` rows you change in the pane. It sets no environment variables. It keeps favourites and folded sections in Claude Code's plugin store.
+
+**What it reads.** Your settings (`enabledPlugins`), the plugin registry `installed_plugins.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, and each plugin's `.claude-plugin/quick-menu.json`. It sends nothing over the network and reads no credentials.
+
+**Its hooks.**
+
+- `ui.render` on `AbovePrompt`: adds its own row and keeps every other mod's band beneath it.
+- `ui.render` on its `Pane`: draws the menu.
+- `command.run` for `/menu` only: answers it and touches no other command.
+- `plugin.register`: only records the root of plugins loaded with `--plugin-dir`; it changes nothing.
+- `session.start`: registers `/menu`, loads favourites and folds, and starts discovery.
+
 ## For plugin authors
 
 Add `.claude-plugin/quick-menu.json` to your plugin:

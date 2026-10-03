@@ -4,6 +4,14 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-03
+
+### Changed
+
+- Settings are written through Claude Code's own `/config <key>=<value>`, so every write is visible as that command.
+- README: a section on what the plugin runs, sets and reads on your machine, and what each hook does.
+- Plugin icon.
+
 ## [0.1.0] - 2026-10-03
 
 ### Added
@@ -22,5 +30,6 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/agentic-workbench/agent-quick-menu/releases/tag/v0.1.0

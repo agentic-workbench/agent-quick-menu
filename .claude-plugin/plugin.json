@@ -9,7 +9,7 @@
   "homepage": "https://github.com/agentic-workbench/agent-quick-menu",
   "repository": "https://github.com/agentic-workbench/agent-quick-menu",
   "license": "MIT",
-  "types": "./types/index.d.ts",
+  "icon": "./.claude-plugin/icon.png",
   "userConfig": {
     "bandHotkeys": {
       "type": "boolean",
