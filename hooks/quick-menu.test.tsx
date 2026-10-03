@@ -26,6 +26,7 @@ type World = {
   run?: (e: { command: string; args?: string }) => unknown
   set?: (e: { key: string; value: unknown }) => unknown
   open?: (e: unknown) => void
+  placed?: false
   store?: Map<string, unknown>
 }
 
@@ -37,7 +38,11 @@ function stub(on: any, w: World) {
   const env = (): Record<string, string> => ({ HOME, ...w.env })
   on('session.start', () => ({ cwd: '/tmp' }))
   on('command.register', () => ({ value: undefined }))
-  on('ui.open', (_$: unknown, e: unknown) => (w.open?.(e), { value: { isPlaced: true } }))
+  on('ui.open', (_$: unknown, e: unknown) => (
+    w.open?.(e),
+    { value: w.placed === false ? { isPlaced: false, reason: 'terminal too narrow' } : { isPlaced: true } }
+  ))
+  on('ui.panes', () => ({ value: [] }))
   const store = w.store ?? new Map<string, unknown>()
   on('store.get', (_$: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_$: unknown, e: { key: string; value: unknown }) => {
@@ -69,7 +74,8 @@ async function start($: any, cwd = '/tmp') {
   await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
 }
 
-async function paneText($: any): Promise<any> {
+/** The pane as first drawn: sections at their default fold. */
+async function foldedPane($: any): Promise<any> {
   return $.ui.mount({
     plugin: 'agent-quick-menu',
     surface: 'terminal',
@@ -77,6 +83,19 @@ async function paneText($: any): Promise<any> {
     props: PANE_PROPS,
     requestId: 'quick-menu',
   })
+}
+
+/** The pane with every section expanded, as most tests read it. */
+async function paneText($: any, surface = 'terminal'): Promise<any> {
+  const ui = await $.ui.mount({
+    plugin: 'agent-quick-menu',
+    surface,
+    component: 'Pane',
+    props: PANE_PROPS,
+    requestId: 'quick-menu',
+  })
+  await ui.press({ key: 'expand-all' })
+  return ui
 }
 
 const row = (key: string, extra: Record<string, unknown> = {}) => ({
@@ -90,7 +109,7 @@ const row = (key: string, extra: Record<string, unknown> = {}) => ({
 })
 
 const realButtons = async (ui: any) =>
-  (await ui.findAll({ type: 'Button' })).filter((b: any) => !String(b.key).includes('star:'))
+  (await ui.findAll({ type: 'Button' })).filter((b: any) => !/star:|^fold:|^(expand|collapse)-all$/.test(String(b.key)))
 
 const file = (o: unknown) => JSON.stringify(o)
 
@@ -139,7 +158,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /Alpha/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ Alpha/ })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await ui.find({ text: /Gone \(not available\)/ })).toBeDefined()
     expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
@@ -177,7 +196,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^cfg$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ cfg$/ })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.token' })).toBeDefined()
     expect(await ui.find({ key: 'set:cfg.mode' })).toBeDefined()
     expect(await ui.find({ key: 'set:other.x' })).toBeDefined()
@@ -198,7 +217,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^FromCfgDir$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ FromCfgDir$/ })).toBeDefined()
     expect(await ui.find({ text: /installed_plugins/ })).toBeUndefined()
   })
 
@@ -219,9 +238,9 @@ describe('discovery', () => {
     const titles = async (cwd: string) => {
       await start($, cwd)
       const ui = await paneText($)
-      const texts = await textsOf(ui)
+      const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => String(b.props.label).replace(/^. /, ''))
       await ui.unmount()
-      return texts
+      return labels
     }
     expect(await titles('/work')).toContain('work')
     world.registry = { 'alpha@mk': [mixed[0]!, mixed[1]!] }
@@ -236,7 +255,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^inline$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ inline$/ })).toBeDefined()
     expect(await ui.find({ key: 'set:inline.opt' })).toBeDefined()
   })
 
@@ -251,7 +270,7 @@ describe('discovery', () => {
     })
     await start($)
     const ui = await paneText($)
-    expect(await ui.find({ text: /^devone$/ })).toBeDefined()
+    expect(await ui.find({ text: /▾ devone$/ })).toBeDefined()
     expect(await ui.find({ text: /two: cannot identify plugin dir/ })).toBeDefined()
   })
 
@@ -401,16 +420,10 @@ describe('settings', () => {
       ]),
     )
     await start($)
-    const ui = await $.ui.mount({
-      plugin: 'agent-quick-menu',
-      surface: 'mobile',
-      component: 'Pane',
-      props: PANE_PROPS,
-      requestId: 'quick-menu',
-    })
-    expect(await ui.find({ text: /mode: a/ })).toBeDefined()
-    expect(await ui.find({ text: /name: x/ })).toBeDefined()
-    expect(await ui.find({ text: /count: 1/ })).toBeDefined()
+    const ui = await paneText($, 'mobile')
+    expect(await ui.find({ text: /mode\s+a/ })).toBeDefined()
+    expect(await ui.find({ text: /name\s+x/ })).toBeDefined()
+    expect(await ui.find({ text: /count\s+1/ })).toBeDefined()
     expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
   })
 
@@ -472,10 +485,11 @@ describe('sections', () => {
     })
     await start($)
     const ui = await paneText($)
-    const heads = (await ui.findAll({ type: 'Text' }))
+    const heads = (await ui.findAll({ type: 'Button' }))
+      .concat(await ui.findAll({ type: 'Text' }))
       .map((x: any) => x.text as string)
-      .filter((t: string) => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
-    expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
+      .filter((t: string) => ['▾ Alpha', '▾ Zed', '▾ cfg', '▾ Claude Code', 'Problems'].includes(t))
+    expect(heads).toEqual(['▾ Alpha', '▾ Zed', '▾ cfg', '▾ Claude Code', 'Problems'])
     expect(await ui.find({ key: 'set:theme' })).toBeDefined()
   })
 })
@@ -542,8 +556,8 @@ describe('favourites', () => {
     stub(on, FAV_WORLD({ store }))
     await start($)
     const ui = await paneText($)
-    const texts = await textsOf(ui)
-    expect(texts.indexOf('Favourites')).toBe(0)
+    const heads = (await ui.findAll({ type: 'Button' })).map((x: any) => x.text as string)
+    expect(heads.filter((t: string) => t.includes('Favourites') || t.includes('alpha'))).toEqual(['▾ Favourites', '▾ alpha'])
     const keys = (await ui.findAll({})).map((x: any) => x.key as string).filter((k: string) => k?.startsWith('fav:') && !k.includes('star'))
     expect(keys).toEqual(['fav:set:alpha.name', 'fav:cmd:alpha:stop:'])
   })
@@ -619,14 +633,14 @@ describe('band', () => {
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
     await start($)
-    // menu: 6 + 5 = 11; reserve 4; Go: 2 + 5 = 7 -> 22; stop: 4 + 5 = 9 -> 31.
+    // menu: 6 + 5 = 11, divider 2, reserve 4 -> 17; Go: 2 + 3 (digit) + 2 = 7 -> 24; stop: 4 + 3 + 2 = 9 -> 33.
     const labels = async (columns: number) =>
       (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).map(
         (b: any) => b.props.label,
       )
-    expect(await labels(31)).toEqual(['☰ menu', 'Go', 'stop'])
-    expect(await labels(30)).toEqual(['☰ menu', 'Go'])
-    expect(await labels(21)).toEqual(['☰ menu'])
+    expect(await labels(33)).toEqual(['☰ menu', 'Go', 'stop'])
+    expect(await labels(32)).toEqual(['☰ menu', 'Go'])
+    expect(await labels(23)).toEqual(['☰ menu'])
   })
 
   test('only command favourites get digit hotkeys', async ($, on) => {
@@ -674,5 +688,149 @@ describe('band', () => {
     const ui = await mountBand($, { ...(BAND_PROPS as object), hasSurvey: true })
     expect(await ui.find({ text: /survey/ })).toBeDefined()
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  })
+})
+
+describe('folding', () => {
+  const FOLD = (extra: Partial<World> = {}): World => ({
+    ...FAV_WORLD(extra),
+    rows: [
+      row('alpha.flag', { kind: 'boolean', value: false, label: 'flag' }),
+      row('alpha.longer_name', { value: 'x', label: 'longer_name' }),
+      row('theme', { kind: 'choice', value: 'dark', options: ['dark', 'light'] }),
+    ],
+  })
+
+  test('defaults: Favourites open, every other section folded', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
+    stub(on, FOLD({ store }))
+    await start($)
+    const ui = await foldedPane($)
+    const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
+    expect(labels).toContain('▾ Favourites')
+    expect(labels).toContain('▸ alpha')
+    expect(labels).toContain('▸ Claude Code')
+    expect(await ui.find({ key: 'fav:cmd:alpha:stop:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeUndefined()
+    expect(await ui.find({ key: 'set:theme' })).toBeUndefined()
+  })
+
+  test('a header toggles its section and the state persists in $.store and across session.start', async ($, on) => {
+    const store = new Map<string, unknown>()
+    stub(on, FOLD({ store }))
+    await start($)
+    const ui = await foldedPane($)
+    await ui.press({ key: 'fold:plugin:alpha' })
+    expect(store.get('folded')).toEqual({ 'plugin:alpha': false })
+    expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toContain('▾ alpha')
+    await start($)
+    expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
+    await ui.press({ key: 'fold:plugin:alpha' })
+    expect(store.get('folded')).toEqual({ 'plugin:alpha': true })
+    expect(await ui.find({ key: 'cmd:alpha:go:--all' })).toBeUndefined()
+  })
+
+  test('a fold made by another session is not lost by a toggle here', async ($, on) => {
+    const store = new Map<string, unknown>()
+    stub(on, FOLD({ store }))
+    await start($)
+    const ui = await foldedPane($)
+    store.set('folded', { engine: false })
+    await ui.press({ key: 'fold:plugin:alpha' })
+    expect(store.get('folded')).toEqual({ engine: false, 'plugin:alpha': false })
+  })
+
+  test('Expand all and Collapse all carry the hotkeys e and c and set every section', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', [{ kind: 'command', plugin: 'alpha', key: 'stop' }]]])
+    stub(on, FOLD({ store }))
+    await start($)
+    const ui = await foldedPane($)
+    const hotkeys = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.hotkey).map((b: any) => [b.props.label, b.props.hotkey])
+    expect(hotkeys).toEqual([['Expand all', 'e'], ['Collapse all', 'c']])
+    await ui.press({ key: 'expand-all' })
+    expect(store.get('folded')).toEqual({ favourites: false, 'plugin:alpha': false, engine: false })
+    expect(await ui.find({ key: 'set:theme' })).toBeDefined()
+    await ui.press({ key: 'collapse-all' })
+    expect(store.get('folded')).toEqual({ favourites: true, 'plugin:alpha': true, engine: true })
+    expect(await ui.find({ key: 'set:theme' })).toBeUndefined()
+    expect(await ui.find({ key: 'fav:cmd:alpha:stop:' })).toBeUndefined()
+  })
+
+  test('the commands of a section sit in one wrapping row', async ($, on) => {
+    stub(on, FOLD())
+    await start($)
+    const ui = await paneText($)
+    const rows = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.flexWrap === 'wrap')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].key).toBe('commands')
+    const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
+    expect(labels.filter((l: string) => l === 'Go' || l === 'stop')).toEqual(['Go', 'stop'])
+  })
+
+  test('setting labels are padded to the longest label of their section', async ($, on) => {
+    stub(on, FOLD())
+    await start($)
+    const ui = await paneText($)
+    const flag = await ui.find({ key: 'set:alpha.flag' })
+    const name = await ui.find({ key: 'set:alpha.longer_name' })
+    expect(flag.props.label).toBe('flag         off')
+    expect(name.props.label).toBe('longer_name  ')
+  })
+
+  test('a locked row is dim and says managed', async ($, on) => {
+    stub(on, { ...FOLD(), rows: [row('alpha.flag', { kind: 'boolean', value: true, isLocked: true })] })
+    await start($)
+    const ui = await paneText($)
+    const t = (await ui.findAll({ type: 'Text' })).find((x: any) => /managed/.test(x.text))
+    expect(t.props.dimColor).toBe(true)
+  })
+
+  test('the pane opens with closeOnEscape', async ($, on) => {
+    const opened: unknown[] = []
+    stub(on, FOLD({ open: e => opened.push(e) }))
+    emptyBase(on)
+    await start($)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    expect(opened).toMatchObject([{ id: 'quick-menu', closeOnEscape: true }])
+  })
+})
+
+describe('narrow terminal', () => {
+  const NARROW = (extra: Partial<World> = {}): World => ({ ...FAV_WORLD(extra), placed: false })
+
+  test('an unplaced pane toasts why and the band shows the section headers', async ($, on) => {
+    const toasts: string[] = []
+    on('ui.toast', (_$: any, e: any, next: any) => (toasts.push(e.text), next(e)))
+    stub(on, NARROW())
+    emptyBase(on)
+    await start($)
+    const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
+    expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
+    await ui.press({ key: 'band:menu' })
+    expect(toasts.join()).toMatch(/terminal too narrow/)
+    const fresh = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
+    expect((await fresh.find({ key: 'fold:plugin:alpha' })).props.label).toBe('▸ alpha')
+    await fresh.press({ key: 'fold:plugin:alpha' })
+    expect(await fresh.find({ key: 'cmd:alpha:go:--all' })).toBeDefined()
+  })
+
+  test('the band menu stays within maxRows', async ($, on) => {
+    stub(on, NARROW({ rows: [row('b.x'), row('c.x'), row('d.x'), row('e.x')] }))
+    emptyBase(on)
+    await start($)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 3 })
+    const heads = (await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))
+    expect(heads).toHaveLength(2)
+  })
+
+  test('a placed pane leaves the band to its one line', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    await (await mountBand($)).press({ key: 'band:menu' })
+    const ui = await mountBand($)
+    expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
   })
 })

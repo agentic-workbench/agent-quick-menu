@@ -10,6 +10,8 @@ const sections = atom({ plugin: 'agent-quick-menu', key: 'sections' } as const, 
 const problems = atom({ plugin: 'agent-quick-menu', key: 'problems' } as const, [] as MenuProblem[])
 
 const favourites = atom({ plugin: 'agent-quick-menu', key: 'favourites' } as const, [] as Favourite[])
+const folded = atom({ plugin: 'agent-quick-menu', key: 'folded' } as const, {} as Record<string, boolean>)
+const unplaced = atom({ plugin: 'agent-quick-menu', key: 'unplaced' } as const, false)
 
 type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 
@@ -314,19 +316,24 @@ async function toggleFavourite($: EngineInterface, f: Favourite): Promise<void> 
   $.ui.invalidate('ui.render')
 }
 
-/** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). */
-type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean }
+/** `hasFields`: the surface draws Input and Select (the mobile table has neither; its stand-ins draw nothing). `pad`: the section's longest setting label. */
+type FavCtx = { list: readonly Favourite[]; prefix: string; hasFields: boolean; pad: number }
 
 function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: FavCtx) {
   const { Button } = ui
+  const pinned = isFavourite(fav.list, f)
   return (
     <Button
       key={`${fav.prefix}star:${id}`}
-      label={isFavourite(fav.list, f) ? '★' : '☆'}
+      label={pinned ? '★' : '☆'}
+      plain
+      {...(!pinned && { dimColor: true as const })}
       onPress={() => void toggleFavourite($, f)}
     />
   )
 }
+
+const pad = (text: string, to: number): string => text + ' '.repeat(Math.max(0, to - width(text)))
 
 function renderSetting(
   $: EngineInterface,
@@ -341,14 +348,15 @@ function renderSetting(
   const id = fav.prefix + settingKey(row.key)
   const note = notes[settingKey(row.key)]
   const shown = Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
+  const label = pad(row.label, fav.pad)
   let control
   if (row.isLocked) {
-    control = <Text key={id}>{`${row.label}: ${shown} (managed)`}</Text>
+    control = <Text key={id} dimColor>{`${label}  ${shown}  managed`}</Text>
   } else if (row.kind === 'boolean') {
     control = (
       <Button
         key={id}
-        label={`${row.label}: ${row.value ? 'on' : 'off'}`}
+        label={`${label}  ${row.value ? 'on' : 'off'}`}
         onPress={() => void writeSetting($, row, !row.value)}
       />
     )
@@ -356,7 +364,7 @@ function renderSetting(
     control = (
       <Select
         key={id}
-        label={`${row.label}: `}
+        label={`${label}  `}
         options={row.options.map(value => ({ value }))}
         value={shown}
         onSelect={(value: string) => void writeSetting($, row, value)}
@@ -366,17 +374,18 @@ function renderSetting(
     control = (
       <Input
         key={id}
-        label={`${row.label}: `}
+        label={`${label}  `}
         value={shown}
         onSubmit={(value: string) => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
       />
     )
   } else {
-    control = <Text key={id}>{`${row.label}: ${shown}`}</Text>
+    control = <Text key={id}>{`${label}  ${shown}`}</Text>
   }
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'setting', plugin, key: row.key }, settingKey(row.key), fav)}
+      <Text> </Text>
       {control}
       {note && <Text color="red">{`  ${note.text}`}</Text>}
     </Box>
@@ -397,13 +406,13 @@ function renderCommand(
   return (
     <Box key={`row:${id}`} flexDirection="row">
       {renderStar($, ui, { kind: 'command', plugin, key: favCommandKey(c) }, rid, fav)}
+      <Text> </Text>
       {c.isAvailable ? (
         <Button key={id} label={c.label} onPress={() => void runCommand($, plugin, c)} />
       ) : (
         <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
       )}
-      {state.queued[rid] && <Text dimColor>  queued</Text>}
-      {c.description && <Text dimColor>{`  ${c.description}`}</Text>}
+      {state.queued[rid] && <Text dimColor> queued</Text>}
     </Box>
   )
 }
@@ -443,6 +452,7 @@ function renderFavourite(
   return (
     <Box key={`row:${fav.prefix}gone:${f.kind}:${f.plugin}:${f.key}`} flexDirection="row">
       {renderStar($, ui, f, `${f.kind}:${f.plugin}:${f.key}`, fav)}
+      <Text> </Text>
       <Text dimColor>{`${f.key} (gone)`}</Text>
     </Box>
   )
@@ -456,60 +466,192 @@ function configSections(rows: readonly ConfigRow[], filed: readonly MenuSection[
     .map(plugin => ({ plugin, title: plugin, commands: [], settings: null, source: 'config' as const }))
 }
 
-async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
-  const ui = $.ui.resolve(e)
-  const { Box, Text } = ui
-  const [s, p, state] = [await read($, sections), await read($, problems), await read($, rowState)]
+/** One foldable section of the pane: the pinned list, a plugin, or Claude Code's own settings. */
+type Block = {
+  id: string
+  plugin: string
+  title: string
+  commands: SectionCommand[]
+  rows: ConfigRow[]
+  favs?: readonly Favourite[]
+}
+
+type MenuData = {
+  all: MenuSection[]
+  rows: ConfigRow[]
+  state: RowState
+  favs: Favourite[]
+  folded: Record<string, boolean>
+  blocks: Block[]
+}
+
+const FAV_ID = 'favourites'
+const ENGINE_ID = 'engine'
+const pluralOf = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`
+
+/** Folded unless the map says otherwise; only the pinned list starts open. */
+const isFolded = (folded: Record<string, boolean>, id: string): boolean => folded[id] ?? id !== FAV_ID
+
+function isFolds(v: unknown): v is Record<string, boolean> {
+  return isObject(v) && Object.values(v).every(x => typeof x === 'boolean')
+}
+
+async function storedFolds($: EngineInterface): Promise<Record<string, boolean>> {
+  try {
+    const stored: unknown = await $.store.get('folded')
+    return isFolds(stored) ? stored : {}
+  } catch {
+    return {}
+  }
+}
+
+async function loadFolds($: EngineInterface): Promise<void> {
+  const stored = await storedFolds($)
+  await update($, folded, () => stored)
+}
+
+async function writeFolds($: EngineInterface, change: (stored: Record<string, boolean>) => Record<string, boolean>): Promise<void> {
+  const next = change(await storedFolds($))
+  await $.store.set('folded', next)
+  await update($, folded, () => next)
+  $.ui.invalidate('ui.render')
+}
+
+const toggleFold = ($: EngineInterface, id: string): Promise<void> =>
+  writeFolds($, stored => ({ ...stored, [id]: !isFolded(stored, id) }))
+
+const foldAll = ($: EngineInterface, ids: readonly string[], isFold: boolean): Promise<void> =>
+  writeFolds($, stored => ({ ...stored, ...Object.fromEntries(ids.map(id => [id, isFold])) }))
+
+async function loadMenu($: EngineInterface): Promise<MenuData> {
+  const [s, state, favs, folds] = [await read($, sections), await read($, rowState), await read($, favourites), await read($, folded)]
   let rows: ConfigRow[] = []
   try {
     rows = await $.config.list()
   } catch {
     rows = []
   }
-  const engineRows = rows.filter(r => r.provider.plugin === 'engine')
   const all = [...s, ...configSections(rows, s)]
-  const favs = await read($, favourites)
-  const hasFields = e.surface !== 'mobile'
-  const own: FavCtx = { list: favs, prefix: '', hasFields }
-  const pinned: FavCtx = { list: favs, prefix: 'fav:', hasFields }
+  const blocks: Block[] = []
+  if (favs.length > 0) blocks.push({ id: FAV_ID, plugin: '', title: 'Favourites', commands: [], rows: [], favs })
+  for (const section of all) {
+    blocks.push({
+      id: `plugin:${section.plugin}`,
+      plugin: section.plugin,
+      title: section.title,
+      commands: section.commands,
+      rows: settingRows(section, rows),
+    })
+  }
+  const engineRows = rows.filter(r => r.provider.plugin === 'engine')
+  if (engineRows.length > 0) {
+    blocks.push({ id: ENGINE_ID, plugin: 'engine', title: 'Claude Code', commands: [], rows: engineRows })
+  }
+  return { all, rows, state, favs, folded: folds, blocks }
+}
+
+function summaryOf(b: Block): string {
+  if (b.favs) return `${b.favs.length} pinned`
+  return [
+    ...(b.commands.length > 0 ? [pluralOf(b.commands.length, 'command')] : []),
+    ...(b.rows.length > 0 ? [pluralOf(b.rows.length, 'setting')] : []),
+  ].join(' · ')
+}
+
+/** Rows a block takes: its header, plus a wrapped command row (counted as one) and a row per setting when open. */
+function blockRows(b: Block, isOpen: boolean): number {
+  if (!isOpen) return 1
+  if (b.favs) return 1 + b.favs.length
+  return 1 + (b.commands.length > 0 ? 1 : 0) + b.rows.length
+}
+
+function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true) {
+  const { Box, Text, Button } = ui
+  const isOpen = !isFolded(d.folded, b.id)
+  const labelRows = b.favs
+    ? b.favs.flatMap(f => (f.kind === 'setting' ? d.rows.filter(r => r.key === f.key) : []))
+    : b.rows
+  const widest = Math.max(0, ...labelRows.map(r => width(r.label)))
+  const fav = (prefix: string): FavCtx => ({ list: d.favs, prefix, hasFields, pad: widest })
+  let body: RenderNode[] | null = null
+  if (!showBody) {
+    body = null
+  } else if (isOpen && b.favs) {
+    body = b.favs.map(f => renderFavourite($, ui, f, d.all, d.rows, d.state, fav('fav:')))
+  } else if (isOpen) {
+    body = [
+      ...(b.commands.length > 0
+        ? [
+            <Box key="commands" flexDirection="row" flexWrap="wrap" columnGap={2}>
+              {b.commands.map(c => renderCommand($, ui, b.plugin, c, d.state, fav('')))}
+            </Box>,
+          ]
+        : []),
+      ...b.rows.map(r => renderSetting($, ui, r, b.plugin, d.state.notes, fav(''))),
+    ]
+  }
   return (
-    <Box flexDirection="column">
-      {favs.length > 0 && (
-        <Box key="favourites" flexDirection="column">
-          <Text bold>Favourites</Text>
-          {favs.map(f => renderFavourite($, ui, f, all, rows, state, pinned))}
+    <Box key={`section:${b.id}`} flexDirection="column">
+      <Box flexDirection="row" columnGap={2}>
+        <Button
+          key={`fold:${b.id}`}
+          label={`${isOpen ? '▾' : '▸'} ${b.title}`}
+          variant="primary"
+          onPress={() => void toggleFold($, b.id)}
+        />
+        <Text dimColor>{summaryOf(b)}</Text>
+      </Box>
+      {body && body.length > 0 && (
+        <Box key={`body:${b.id}`} flexDirection="column" paddingLeft={2}>
+          {body}
         </Box>
       )}
-      {all.length === 0 && engineRows.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
-      {all.map(section => (
-        <Box key={section.plugin} flexDirection="column">
-          <Text bold>{section.title}</Text>
-          {section.commands.map(c => renderCommand($, ui, section.plugin, c, state, own))}
-          {settingRows(section, rows).map(r => renderSetting($, ui, r, section.plugin, state.notes, own))}
-        </Box>
-      ))}
-      {engineRows.length > 0 && (
-        <Box key="claude-code" flexDirection="column">
-          <Text bold>Claude Code</Text>
-          {engineRows.map(r => renderSetting($, ui, r, 'engine', state.notes, own))}
+    </Box>
+  )
+}
+
+async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
+  const ui = $.ui.resolve(e)
+  const { Box, Text, Button } = ui
+  const p = await read($, problems)
+  const d = await loadMenu($)
+  const hasFields = e.surface !== 'mobile'
+  const sectionBlocks = d.blocks.filter(b => b.id !== FAV_ID)
+  const commandTotal = sectionBlocks.reduce((n, b) => n + b.commands.length, 0)
+  const settingTotal = sectionBlocks.reduce((n, b) => n + b.rows.length, 0)
+  const ids = d.blocks.map(b => b.id)
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="row" columnGap={2}>
+        <Text bold color="cyan">Quick menu</Text>
+        <Button key="expand-all" label="Expand all" hotkey="e" onPress={() => void foldAll($, ids, false)} />
+        <Button key="collapse-all" label="Collapse all" hotkey="c" onPress={() => void foldAll($, ids, true)} />
+        <Text dimColor>{`${pluralOf(sectionBlocks.length, 'section')} · ${pluralOf(commandTotal, 'command')} · ${pluralOf(settingTotal, 'setting')}`}</Text>
+      </Box>
+      {sectionBlocks.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
+      {d.blocks.map(b => renderBlock($, ui, b, d, hasFields))}
+      {p.length > 0 && (
+        <Box key="problems" flexDirection="column">
+          <Text bold>Problems</Text>
+          {p.map((x, i) => (
+            <Text key={String(i)} color="red">{`  ${x.plugin}: ${x.message}`}</Text>
+          ))}
         </Box>
       )}
-      {p.length > 0 && <Text bold>Problems</Text>}
-      {p.map((x, i) => (
-        <Text key={String(i)} color="red">{`  ${x.plugin}: ${x.message}`}</Text>
-      ))}
     </Box>
   )
 }
 
 type BandEvent = Parameters<EngineInterface['ui']['resolve']>[0] & {
-  props: { hasSurvey: boolean; bodyColumns: number }
+  props: { hasSurvey: boolean; bodyColumns: number; maxRows: number }
 }
 
 type BandItem = { label: string; onPress: () => void; isCommand: boolean; digit?: number }
 
 /** Display width of a label in cells: code points, not UTF-16 units. */
-const width = (text: string): number => [...text].length
+function width(text: string): number {
+  return [...text].length
+}
 
 function bandItem(
   $: EngineInterface,
@@ -534,47 +676,74 @@ function bandItem(
   return { label: r.label, onPress: () => void openPane($), isCommand: false }
 }
 
+/** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
 async function openPane($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100 })
+  const opened = await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: 100, closeOnEscape: true })
+  await update($, unplaced, () => !opened.isPlaced)
+  if (!opened.isPlaced) $.ui.toast(`Quick menu: ${opened.reason}. Showing it above the prompt instead.`)
+  $.ui.invalidate('ui.render')
+}
+
+/** True while the pane was refused for width and is still not drawn. */
+async function isUnplaced($: EngineInterface): Promise<boolean> {
+  if (!(await read($, unplaced))) return false
+  try {
+    const pane = (await $.ui.panes()).find(x => x.id === PANE_ID)
+    return !pane?.isPlaced
+  } catch {
+    return true
+  }
+}
+
+/** The folded section list in the band: the same header buttons, at most `budget` rows. */
+function renderBandMenu($: EngineInterface, ui: Ui, d: MenuData, budget: number) {
+  const out = []
+  let left = budget
+  for (const b of d.blocks) {
+    const need = blockRows(b, !isFolded(d.folded, b.id))
+    if (left < 1) break
+    out.push(renderBlock($, ui, b, d, true, need <= left))
+    left -= Math.min(need, left)
+  }
+  return out
 }
 
 async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown): Promise<RenderElement> {
   if (e.props.hasSurvey) return next() as Promise<RenderElement>
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
-  const { Box, Button } = $.ui.resolve(e)
-  const [favs, found] = [await read($, favourites), await read($, sections)]
-  let rows: ConfigRow[] = []
-  try {
-    rows = await $.config.list()
-  } catch {
-    rows = []
-  }
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const d = await loadMenu($)
   const menuLabel = '☰ menu'
-  // Each button takes its label plus 5 cells; 4 stay free for the engine's `[-]`.
-  let used = width(menuLabel) + 5 + 4
+  // The menu button takes its label plus 5 cells, the divider 2, a plain button its label, 3 for a digit and 2 apart; 4 stay free for the engine's `[-]`.
+  let used = width(menuLabel) + 5 + 2 + 4
   const items: BandItem[] = []
-  for (const f of favs) {
-    const item = bandItem($, f, found, rows)
+  for (const f of d.favs) {
+    const item = bandItem($, f, d.all, d.rows)
     if (!item) continue
-    used += width(item.label) + 5
-    if (used > e.props.bodyColumns) break
     const digits = items.filter(x => x.isCommand).length
-    items.push(item.isCommand && digits < 9 ? { ...item, digit: digits + 1 } : item)
+    const digit = item.isCommand && digits < 9 ? digits + 1 : undefined
+    used += width(item.label) + (digit === undefined ? 0 : 3) + 2
+    if (used > e.props.bodyColumns) break
+    items.push(digit === undefined ? item : { ...item, digit })
   }
+  const menu = (await isUnplaced($)) ? renderBandMenu($, $.ui.resolve(e), d, e.props.maxRows - 1) : null
   const below = (await next()) as RenderNode | null | undefined
   return (
     <Box flexDirection="column">
-      <Box>
+      <Box columnGap={1}>
         <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void openPane($)} />
+        {items.length > 0 && <Text dimColor>│</Text>}
         {items.map((item, i) => (
           <Button
             key={`band:${i + 1}`}
             label={item.label}
+            plain
             {...(item.digit !== undefined && { hotkey: String(item.digit) })}
             onPress={item.onPress}
           />
         ))}
       </Box>
+      {menu}
       {below}
     </Box>
   )
@@ -584,7 +753,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     sessionCwd = e.cwd
     await update($, rowState, () => ({ queued: {}, notes: {} }))
+    await update($, unplaced, () => false)
     await loadFavourites($)
+    await loadFolds($)
     await $.command.register({
       name: 'menu',
       description: 'Open the quick menu (refresh: discover plugin menus again)',

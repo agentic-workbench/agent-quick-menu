@@ -54,6 +54,8 @@ declare module 'claude-code' {
       problems: MenuProblem[]
       rowState: RowState
       favourites: Favourite[]
+      folded: Record<string, boolean>
+      unplaced: boolean
     }
   }
 }

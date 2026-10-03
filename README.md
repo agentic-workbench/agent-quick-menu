@@ -22,15 +22,17 @@ Then run `/reload-plugins` in a running session.
 ## Usage
 
 - `/menu` opens the pane. `/menu refresh` discovers plugin menus again.
-- The band above the prompt shows `☰ menu` (hotkey `m` while the band is focused) and your favourites.
+- The band above the prompt is one line: `☰ menu │ 1 Pull  2 Status …` (hotkey `m` while the band is focused, then your favourites).
 - `ctrl+x tab` focuses the band.
 - With an empty prompt, the digits `1` to `9` press the command favourites in order. Setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
+- Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. Escape closes the pane.
+- If the terminal is too narrow to place the pane, a toast says so and the band lists the sections (header buttons, at most as many rows as the band may take) instead.
 - `[-]` at the end of the band (drawn by Claude Code, or ctrl+x ctrl+a) folds the band.
 
 ## What appears
 
-- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands as buttons and its settings (`userConfig`) as rows.
+- One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands as a wrapping row of buttons and its settings (`userConfig`) as an aligned label/value table.
 - A settings-only section for each plugin without the file that has `userConfig` rows.
 - A "Claude Code" section with Claude Code's own settings.
 - A locked row (`(managed)`) is set by managed policy and cannot be changed here.
