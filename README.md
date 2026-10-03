@@ -27,12 +27,15 @@ Then run `/reload-plugins` in a running session.
 - With an empty prompt, the digits `1` to `9` press the command favourites in order. Setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
 - Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. Escape closes the pane.
+- The filter field at the top (`filter…`) matches setting labels and keys and command names, case-insensitive, across every section. Sections without a match are hidden, matching ones open while a filter is set, and the counts follow.
+- Every setting row is a plain label and a value: a boolean is a small `[ on ]` / `[ off ]` toggle, a choice keeps `value ▾`.
 - If the terminal is too narrow to place the pane, a toast says so and the band lists the sections (header buttons, at most as many rows as the band may take) instead.
 - `[-]` at the end of the band (drawn by Claude Code, or ctrl+x ctrl+a) folds the band.
 
 ## What appears
 
 - One section per plugin that ships a `.claude-plugin/quick-menu.json`: its commands as a wrapping row of buttons and its settings (`userConfig`) as an aligned label/value table.
+- A commands-only section for a plugin loaded with `--plugin-dir` whose root is not known (see Limitations): its registered commands, and a dim line saying to set `CLAUDE_CODE_PLUGIN_DIRS`.
 - A settings-only section for each plugin without the file that has `userConfig` rows.
 - A "Claude Code" section with Claude Code's own settings.
 - A locked row (`(managed)`) is set by managed policy and cannot be changed here.
@@ -55,6 +58,7 @@ The full format is in [docs/convention.md](docs/convention.md).
 ## Limitations
 
 - There is no global hotkey; the band hotkeys work only while the band is focused or the prompt is empty.
+- A `--plugin-dir` plugin's root is only learned when its hooks module loads after this one (`plugin.register`); a plugin without one, or loaded earlier, is listed from `$.command.list()` with its commands only. Set `CLAUDE_CODE_PLUGIN_DIRS` to the same folder to read its `quick-menu.json`.
 - Settings that are not shown in `/config` are not shown here.
 - A favourite setting that is not boolean opens the pane instead of toggling.
 

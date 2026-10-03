@@ -26,13 +26,17 @@ export type SectionCommand = {
   isAvailable: boolean
 }
 
-/** One plugin's section: `file` when its menu file was read, `config` when only `userConfig` rows exist. */
+/** One plugin's section: `file` when its menu file was read, `config` when only `userConfig` rows exist, `commands` when only its registered commands are known (loaded with `--plugin-dir`). */
 export type MenuSection = {
   plugin: string
   title: string
   commands: SectionCommand[]
   settings: string[] | null
-  source: 'file' | 'config'
+  source: 'file' | 'config' | 'commands'
+  /** Dim line shown under the section's header while open. */
+  note?: string
+  /** A plugin bundled in the binary: its title carries a dim `built-in` tag. */
+  isBuiltIn?: boolean
 }
 
 /** A plugin whose menu file or registry entry could not be used. */
@@ -56,6 +60,7 @@ declare module 'claude-code' {
       favourites: Favourite[]
       folded: Record<string, boolean>
       unplaced: boolean
+      filter: string
     }
   }
 }

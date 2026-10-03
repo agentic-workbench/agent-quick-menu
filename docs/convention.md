@@ -41,6 +41,10 @@ Check a name by typing `/` in Claude Code. A command that is not available is hi
 
 A plugin without `quick-menu.json` gets a settings-only section when it has `userConfig` rows (all of them, no commands). Without rows it is not listed.
 
+## Plugins loaded with `--plugin-dir`
+
+The menu reads the file from a plugin's root. For a `--plugin-dir` plugin the root is learned from `plugin.register` when its hooks module loads after the menu's; otherwise the menu lists its registered commands only. Name the folder in `CLAUDE_CODE_PLUGIN_DIRS` (absolute paths, `:`-separated) to make the file load.
+
 ## Versioning
 
 Unknown keys are ignored within version 1, so fields can be added without breaking existing files. A new major version is introduced only for breaking changes.

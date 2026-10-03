@@ -22,6 +22,7 @@ type World = {
   files?: Record<string, string>
   env?: Record<string, string>
   commands?: string[]
+  pluginCommands?: { name: string; plugin: string; description?: string }[]
   rows?: Record<string, unknown>[]
   run?: (e: { command: string; args?: string }) => unknown
   set?: (e: { key: string; value: unknown }) => unknown
@@ -58,7 +59,10 @@ function stub(on: any, w: World) {
     return { value: f[e.path] }
   })
   on('command.list', () => ({
-    value: (w.commands ?? []).map(name => ({ name, description: '', source: 'plugin' })),
+    value: [
+      ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin' })),
+      ...(w.pluginCommands ?? []).map(c => ({ description: '', source: 'plugin', ...c })),
+    ],
   }))
   on('config.list', () => ({ value: w.rows ?? [] }))
   on('command.run', (_$: unknown, e: { command: string; args?: string }) => {
@@ -461,7 +465,7 @@ describe('settings', () => {
     })
     await start($)
     const ui = await paneText($)
-    const keys = (await ui.findAll({ type: 'Input' })).map((x: any) => x.key)
+    const keys = (await ui.findAll({ type: 'Input' })).map((x: any) => x.key).filter((k: string) => k !== 'filter')
     expect(keys).toEqual(['set:alpha.b', 'set:alpha.a'])
   })
 })
@@ -774,7 +778,8 @@ describe('folding', () => {
     const ui = await paneText($)
     const flag = await ui.find({ key: 'set:alpha.flag' })
     const name = await ui.find({ key: 'set:alpha.longer_name' })
-    expect(flag.props.label).toBe('flag         off')
+    expect(flag.props.label).toBe('off')
+    expect(await ui.find({ text: 'flag         ' })).toBeDefined()
     expect(name.props.label).toBe('longer_name  ')
   })
 
@@ -832,5 +837,123 @@ describe('narrow terminal', () => {
     await (await mountBand($)).press({ key: 'band:menu' })
     const ui = await mountBand($)
     expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
+  })
+})
+
+describe('live feedback round 1', () => {
+  test('a --plugin-dir plugin without a known root is listed from $.command.list() with its commands only', async ($, on) => {
+    const runs: unknown[] = []
+    stub(on, {
+      registry: {},
+      pluginCommands: [
+        { name: 'rt-status', plugin: 'repo-tools', description: 'Status' },
+        { name: 'rt-pull', plugin: 'repo-tools@inline' },
+        { name: 'x', plugin: 'cc-plugin-agents-md' },
+      ],
+      run: e => (runs.push(e), { text: 'ok' }),
+    })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /▾ repo-tools$/ })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-status:' })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:repo-tools:rt-pull:' })).toBeDefined()
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read its quick-menu\.json/ })).toBeDefined()
+    expect(await ui.find({ text: /agents-md/ })).toBeUndefined()
+    await ui.press({ key: 'cmd:repo-tools:rt-status:' })
+    expect(runs).toMatchObject([{ command: 'rt-status' }])
+  })
+
+  test('a plugin whose menu file was read through CLAUDE_CODE_PLUGIN_DIRS is not listed twice', async ($, on) => {
+    stub(on, {
+      registry: {},
+      env: { CLAUDE_CODE_PLUGIN_DIRS: '/dev/one' },
+      files: {
+        '/dev/one/.claude-plugin/plugin.json': file({ name: 'devone' }),
+        '/dev/one/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'x' }] }),
+      },
+      pluginCommands: [{ name: 'x', plugin: 'devone' }],
+    })
+    await start($)
+    const ui = await paneText($)
+    expect((await ui.findAll({ type: 'Button' })).filter((b: any) => /devone$/.test(String(b.props.label)))).toHaveLength(1)
+    expect(await ui.find({ text: /CLAUDE_CODE_PLUGIN_DIRS to read/ })).toBeUndefined()
+  })
+
+  test('every setting row has the same shape: a plain label, then the value; a boolean is a small toggle', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1 }),
+      rows: [
+        row('alpha.flag', { kind: 'boolean', value: true }),
+        row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] }),
+        row('alpha.fixed', { kind: 'boolean', value: false, isLocked: true }),
+      ],
+    })
+    await start($)
+    const ui = await paneText($)
+    const flag = await ui.find({ key: 'set:alpha.flag' })
+    expect(flag.type).toBe('Button')
+    expect(flag.props.label).toBe('on')
+    expect(await ui.find({ text: /^flag\s+$/ })).toBeDefined()
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toMatch(/^mode\s+$/)
+    expect(await ui.find({ text: /fixed\s+false\s+managed/ })).toBeDefined()
+  })
+
+  test('the filter hides rows and sections, opens matches, and the counts follow', async ($, on) => {
+    const SET = (n: string, extra = {}) => row(n, extra)
+    stub(on, {
+      enabled: { 'alpha@mk': true },
+      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+      files: {
+        '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'go', label: 'Go' }] }),
+      },
+      commands: ['go'],
+      rows: [
+        SET('alpha.Flag', { kind: 'boolean', value: true }),
+        SET('alpha.other', { kind: 'text', value: 'x' }),
+        SET('theme', { kind: 'text', value: 'dark' }),
+        SET('autoCompact', { kind: 'boolean', value: true, label: 'Auto-compact' }),
+      ],
+    })
+    await start($)
+    const ui = await foldedPane($)
+    const input = await ui.find({ key: 'filter' })
+    expect(input.props.placeholder).toBe('filter…')
+    await ui.input({ key: 'filter', text: 'FLAG' })
+    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeDefined()
+    expect(await ui.find({ key: 'set:alpha.other' })).toBeUndefined()
+    expect(await ui.find({ key: 'cmd:alpha:go:' })).toBeUndefined()
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).not.toContain('▸ Claude Code')
+    expect(await ui.find({ text: /1 section · 0 commands · 1 setting/ })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'compact' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
+    expect(await ui.find({ key: 'set:alpha.Flag' })).toBeUndefined()
+    await ui.input({ key: 'filter', text: 'autocompact' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeDefined()
+    await ui.input({ key: 'filter', text: 'zzz' })
+    expect(await ui.find({ text: /No match/ })).toBeDefined()
+    await ui.input({ key: 'filter', text: '' })
+    expect(await ui.find({ key: 'set:autoCompact' })).toBeUndefined()
+  })
+
+  test('section titles lose @marketplace; built-in plugins lose cc-plugin- and carry a dim built-in tag', async ($, on) => {
+    stub(on, {
+      enabled: { 'alpha@mk': true },
+      registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+      files: { '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1 }) },
+      rows: [
+        row('cc-plugin-agents-md.on', { provider: { plugin: 'cc-plugin-agents-md', tier: 'builtin' } }),
+        row('shiny@mk.opt', { provider: { plugin: 'shiny@mk', tier: 'user' } }),
+      ],
+    })
+    await start($)
+    const ui = await foldedPane($)
+    const labels = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
+    expect(labels).toContain('▸ alpha')
+    expect(labels).toContain('▸ agents-md')
+    expect(labels).toContain('▸ shiny')
+    const tags = (await ui.findAll({ type: 'Text' })).filter((t: any) => t.text === 'built-in')
+    expect(tags).toHaveLength(1)
+    expect(tags[0].props.dimColor).toBe(true)
   })
 })

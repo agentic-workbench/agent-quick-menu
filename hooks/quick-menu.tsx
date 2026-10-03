@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
-import type { ConfigRow, ConfigValue, Elements, EngineInterface, Register, RenderElement, RenderNode } from 'claude-code'
+import type { CommandInfo, ConfigRow, ConfigValue, Elements, EngineInterface, Register, RenderElement, RenderNode } from 'claude-code'
 
 import type { Favourite, MenuCommand, MenuFile, MenuProblem, MenuSection, SectionCommand } from '../types'
 
 export const PANE_ID = 'quick-menu'
 const MENU_FILE = '.claude-plugin/quick-menu.json'
+const BUILTIN_PREFIX = 'cc-plugin-'
 
 const sections = atom({ plugin: 'agent-quick-menu', key: 'sections' } as const, [] as MenuSection[])
 const problems = atom({ plugin: 'agent-quick-menu', key: 'problems' } as const, [] as MenuProblem[])
@@ -12,6 +13,7 @@ const problems = atom({ plugin: 'agent-quick-menu', key: 'problems' } as const, 
 const favourites = atom({ plugin: 'agent-quick-menu', key: 'favourites' } as const, [] as Favourite[])
 const folded = atom({ plugin: 'agent-quick-menu', key: 'folded' } as const, {} as Record<string, boolean>)
 const unplaced = atom({ plugin: 'agent-quick-menu', key: 'unplaced' } as const, false)
+const filter = atom({ plugin: 'agent-quick-menu', key: 'filter' } as const, '')
 
 type Validation = { ok: true; value: MenuFile } | { ok: false; error: string }
 
@@ -69,6 +71,17 @@ type Target = { name: string; root: string }
 
 let sessionCwd = ''
 
+/** Roots of `--plugin-dir` plugins, learned from `plugin.register` (the only place the types hand out another plugin's `root`). */
+const inlineRoots = new Map<string, string>()
+
+/** The plugin name without its `@<marketplace>` suffix. */
+const bareName = (id: string): string => id.split('@')[0] ?? id
+
+const PLUGIN_DIR_NOTE = 'loaded with --plugin-dir: set CLAUDE_CODE_PLUGIN_DIRS to read its quick-menu.json'
+
+/** Plugins whose commands are not claimed by a built-in prefix or the engine. */
+const isForeign = (name: string): boolean => name !== 'engine' && !name.startsWith(BUILTIN_PREFIX)
+
 /** The install entry for this session: a project or local one for the cwd, else the user one, else the first. */
 function chooseEntry(entries: unknown): Record<string, unknown> | undefined {
   if (!Array.isArray(entries)) return undefined
@@ -124,6 +137,7 @@ async function dirTargets($: EngineInterface, found: MenuProblem[]): Promise<Tar
       found.push({ plugin: root, message: `cannot identify plugin dir: ${message(err)}` })
     }
   }
+  for (const [name, root] of inlineRoots) targets.push({ name, root })
   return targets
 }
 
@@ -144,19 +158,47 @@ async function readMenuFile(
   return null
 }
 
+/** Plugins the registry and the known roots do not explain (a `--plugin-dir` one): their registered commands, no menu file. */
+function commandSections(listed: readonly CommandInfo[], targets: readonly Target[]): MenuSection[] {
+  const known = new Set(targets.map(t => t.name))
+  const byPlugin = new Map<string, SectionCommand[]>()
+  for (const c of listed) {
+    if (c.source !== 'plugin' || !c.plugin) continue
+    const name = bareName(c.plugin)
+    if (known.has(name) || !isForeign(name)) continue
+    const list = byPlugin.get(name) ?? []
+    list.push({
+      command: c.name,
+      label: c.name,
+      ...(c.description !== '' && { description: c.description }),
+      isAvailable: true,
+    })
+    byPlugin.set(name, list)
+  }
+  return [...byPlugin].map(([plugin, commands]) => ({
+    plugin,
+    title: plugin,
+    commands,
+    settings: null,
+    source: 'commands' as const,
+    note: PLUGIN_DIR_NOTE,
+  }))
+}
+
 /** Reads every enabled plugin's menu file and builds the file sections; failures become problems. */
 export async function discover($: EngineInterface): Promise<{ sections: MenuSection[]; problems: MenuProblem[] }> {
   const found: MenuProblem[] = []
   const all = [...(await registryTargets($, found)), ...(await dirTargets($, found))]
   const targets = all.filter((t, i) => all.findIndex(o => o.name === t.name) === i)
 
-  let available = new Set<string>()
+  let listed: CommandInfo[] = []
   try {
-    available = new Set((await $.command.list()).map(c => c.name))
+    listed = await $.command.list()
   } catch (err) {
     found.push({ plugin: 'commands', message: `cannot list commands: ${message(err)}` })
   }
 
+  const available = new Set(listed.map(c => c.name))
   const result: MenuSection[] = []
   for (const target of targets) {
     const file = await readMenuFile($, target, found)
@@ -176,6 +218,7 @@ export async function discover($: EngineInterface): Promise<{ sections: MenuSect
       })
     }
   }
+  result.push(...commandSections(listed, targets))
   result.sort((a, b) => a.title.localeCompare(b.title))
   return { sections: result, problems: found }
 }
@@ -327,7 +370,7 @@ function renderStar($: EngineInterface, ui: Ui, f: Favourite, id: string, fav: F
       key={`${fav.prefix}star:${id}`}
       label={pinned ? '★' : '☆'}
       plain
-      {...(!pinned && { dimColor: true as const })}
+      dimColor
       onPress={() => void toggleFavourite($, f)}
     />
   )
@@ -354,11 +397,10 @@ function renderSetting(
     control = <Text key={id} dimColor>{`${label}  ${shown}  managed`}</Text>
   } else if (row.kind === 'boolean') {
     control = (
-      <Button
-        key={id}
-        label={`${label}  ${row.value ? 'on' : 'off'}`}
-        onPress={() => void writeSetting($, row, !row.value)}
-      />
+      <Box key={`bool:${id}`} flexDirection="row">
+        <Text>{`${label}  `}</Text>
+        <Button key={id} label={row.value ? 'on' : 'off'} onPress={() => void writeSetting($, row, !row.value)} />
+      </Box>
     )
   } else if (row.kind === 'choice' && row.options && row.options.length > 0 && Select && fav.hasFields) {
     control = (
@@ -461,9 +503,15 @@ function renderFavourite(
 /** Settings-only sections: plugins with rows but no menu file section, built at draw time. */
 function configSections(rows: readonly ConfigRow[], filed: readonly MenuSection[]): MenuSection[] {
   const names = new Set(rows.map(r => r.provider.plugin).filter(n => n !== 'engine' && !filed.some(x => x.plugin === n)))
+  const builtin = new Set(rows.filter(r => r.provider.tier === 'builtin').map(r => r.provider.plugin))
   return [...names]
-    .sort((a, b) => a.localeCompare(b))
-    .map(plugin => ({ plugin, title: plugin, commands: [], settings: null, source: 'config' as const }))
+    .map(plugin => {
+      const isBuiltIn = builtin.has(plugin)
+      const bare = bareName(plugin)
+      const title = isBuiltIn && bare.startsWith(BUILTIN_PREFIX) ? bare.slice(BUILTIN_PREFIX.length) : bare
+      return { plugin, title, commands: [], settings: null, source: 'config' as const, ...(isBuiltIn && { isBuiltIn }) }
+    })
+    .sort((a, b) => a.title.localeCompare(b.title))
 }
 
 /** One foldable section of the pane: the pinned list, a plugin, or Claude Code's own settings. */
@@ -474,6 +522,8 @@ type Block = {
   commands: SectionCommand[]
   rows: ConfigRow[]
   favs?: readonly Favourite[]
+  note?: string
+  isBuiltIn?: boolean
 }
 
 type MenuData = {
@@ -482,6 +532,7 @@ type MenuData = {
   state: RowState
   favs: Favourite[]
   folded: Record<string, boolean>
+  filter: string
   blocks: Block[]
 }
 
@@ -524,7 +575,13 @@ const foldAll = ($: EngineInterface, ids: readonly string[], isFold: boolean): P
   writeFolds($, stored => ({ ...stored, ...Object.fromEntries(ids.map(id => [id, isFold])) }))
 
 async function loadMenu($: EngineInterface): Promise<MenuData> {
-  const [s, state, favs, folds] = [await read($, sections), await read($, rowState), await read($, favourites), await read($, folded)]
+  const [s, state, favs, folds, needle] = [
+    await read($, sections),
+    await read($, rowState),
+    await read($, favourites),
+    await read($, folded),
+    (await read($, filter)).trim().toLowerCase(),
+  ]
   let rows: ConfigRow[] = []
   try {
     rows = await $.config.list()
@@ -533,22 +590,45 @@ async function loadMenu($: EngineInterface): Promise<MenuData> {
   }
   const all = [...s, ...configSections(rows, s)]
   const blocks: Block[] = []
-  if (favs.length > 0) blocks.push({ id: FAV_ID, plugin: '', title: 'Favourites', commands: [], rows: [], favs })
+  const hasText = (needle2: string, ...texts: string[]): boolean => texts.some(t => t.toLowerCase().includes(needle2))
+  const keepRow = (r: ConfigRow): boolean => needle === '' || hasText(needle, r.label, r.key)
+  const keepCommand = (c: SectionCommand): boolean => needle === '' || hasText(needle, c.label, c.command)
+  const keepFav = (f: Favourite): boolean => {
+    if (needle === '') return true
+    if (f.kind === 'command') {
+      const c = findFavCommand(f, all)
+      return c ? keepCommand(c) : hasText(needle, f.key)
+    }
+    const r = rows.find(x => x.key === f.key)
+    return r ? keepRow(r) : hasText(needle, f.key)
+  }
+  const shownFavs = favs.filter(keepFav)
+  if (shownFavs.length > 0) {
+    blocks.push({ id: FAV_ID, plugin: '', title: 'Favourites', commands: [], rows: [], favs: shownFavs })
+  }
+  const push = (b: Block): void => {
+    const commands = b.commands.filter(keepCommand)
+    const own = b.rows.filter(keepRow)
+    if (needle === '' || commands.length + own.length > 0) blocks.push({ ...b, commands, rows: own })
+  }
   for (const section of all) {
-    blocks.push({
+    push({
       id: `plugin:${section.plugin}`,
       plugin: section.plugin,
       title: section.title,
       commands: section.commands,
       rows: settingRows(section, rows),
+      ...(section.note !== undefined && { note: section.note }),
+      ...(section.isBuiltIn && { isBuiltIn: true }),
     })
   }
   const engineRows = rows.filter(r => r.provider.plugin === 'engine')
-  if (engineRows.length > 0) {
-    blocks.push({ id: ENGINE_ID, plugin: 'engine', title: 'Claude Code', commands: [], rows: engineRows })
-  }
-  return { all, rows, state, favs, folded: folds, blocks }
+  if (engineRows.length > 0) push({ id: ENGINE_ID, plugin: 'engine', title: 'Claude Code', commands: [], rows: engineRows })
+  return { all, rows, state, favs, folded: folds, filter: needle, blocks }
 }
+
+/** Open when the map says so; every block with a match is open while a filter is set. */
+const isBlockOpen = (d: MenuData, id: string): boolean => d.filter !== '' || !isFolded(d.folded, id)
 
 function summaryOf(b: Block): string {
   if (b.favs) return `${b.favs.length} pinned`
@@ -562,12 +642,12 @@ function summaryOf(b: Block): string {
 function blockRows(b: Block, isOpen: boolean): number {
   if (!isOpen) return 1
   if (b.favs) return 1 + b.favs.length
-  return 1 + (b.commands.length > 0 ? 1 : 0) + b.rows.length
+  return 1 + (b.note ? 1 : 0) + (b.commands.length > 0 ? 1 : 0) + b.rows.length
 }
 
 function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasFields: boolean, showBody = true) {
   const { Box, Text, Button } = ui
-  const isOpen = !isFolded(d.folded, b.id)
+  const isOpen = isBlockOpen(d, b.id)
   const labelRows = b.favs
     ? b.favs.flatMap(f => (f.kind === 'setting' ? d.rows.filter(r => r.key === f.key) : []))
     : b.rows
@@ -580,6 +660,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
     body = b.favs.map(f => renderFavourite($, ui, f, d.all, d.rows, d.state, fav('fav:')))
   } else if (isOpen) {
     body = [
+      ...(b.note ? [<Text key={`note:${b.id}`} dimColor>{b.note}</Text>] : []),
       ...(b.commands.length > 0
         ? [
             <Box key="commands" flexDirection="row" flexWrap="wrap" columnGap={2}>
@@ -599,6 +680,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
           variant="primary"
           onPress={() => void toggleFold($, b.id)}
         />
+        {b.isBuiltIn && <Text dimColor>built-in</Text>}
         <Text dimColor>{summaryOf(b)}</Text>
       </Box>
       {body && body.length > 0 && (
@@ -608,6 +690,11 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, hasField
       )}
     </Box>
   )
+}
+
+async function setFilter($: EngineInterface, value: string): Promise<void> {
+  await update($, filter, () => value)
+  $.ui.invalidate('ui.render')
 }
 
 async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
@@ -620,6 +707,8 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
   const commandTotal = sectionBlocks.reduce((n, b) => n + b.commands.length, 0)
   const settingTotal = sectionBlocks.reduce((n, b) => n + b.rows.length, 0)
   const ids = d.blocks.map(b => b.id)
+  const { Input } = ui as Partial<Pick<Elements['terminal'], 'Input'>>
+  const filterText = await read($, filter)
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" columnGap={2}>
@@ -628,7 +717,18 @@ async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui'
         <Button key="collapse-all" label="Collapse all" hotkey="c" onPress={() => void foldAll($, ids, true)} />
         <Text dimColor>{`${pluralOf(sectionBlocks.length, 'section')} · ${pluralOf(commandTotal, 'command')} · ${pluralOf(settingTotal, 'setting')}`}</Text>
       </Box>
-      {sectionBlocks.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
+      {Input && hasFields && (
+        <Input
+          key="filter"
+          placeholder="filter…"
+          value={filterText}
+          onInput={(value: string) => void setFilter($, value)}
+          onSubmit={(value: string) => void setFilter($, value)}
+        />
+      )}
+      {sectionBlocks.length === 0 && (
+        <Text dimColor>{d.filter === '' ? 'Quick menu: nothing here yet.' : `No match for "${d.filter}".`}</Text>
+      )}
       {d.blocks.map(b => renderBlock($, ui, b, d, hasFields))}
       {p.length > 0 && (
         <Box key="problems" flexDirection="column">
@@ -700,7 +800,7 @@ function renderBandMenu($: EngineInterface, ui: Ui, d: MenuData, budget: number)
   const out = []
   let left = budget
   for (const b of d.blocks) {
-    const need = blockRows(b, !isFolded(d.folded, b.id))
+    const need = blockRows(b, isBlockOpen(d, b.id))
     if (left < 1) break
     out.push(renderBlock($, ui, b, d, true, need <= left))
     left -= Math.min(need, left)
@@ -750,10 +850,16 @@ async function renderBand($: EngineInterface, e: BandEvent, next: () => unknown)
 }
 
 export const register: Register = on => {
+  on('plugin.register', ($, e, next) => {
+    if (e.provenance.endsWith('@inline')) inlineRoots.set(e.name, e.root)
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     sessionCwd = e.cwd
     await update($, rowState, () => ({ queued: {}, notes: {} }))
     await update($, unplaced, () => false)
+    await update($, filter, () => '')
     await loadFavourites($)
     await loadFolds($)
     await $.command.register({
