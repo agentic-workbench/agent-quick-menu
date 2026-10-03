@@ -1,0 +1,30 @@
+name: Plugin registration
+description: A plugin's commands or settings are missing, wrong or misplaced in the menu.
+labels: [plugin-registration]
+body:
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin name and repository
+      placeholder: my-plugin, https://github.com/owner/my-plugin
+    validations:
+      required: true
+  - type: dropdown
+    id: has-file
+    attributes:
+      label: Does the plugin ship `.claude-plugin/quick-menu.json`?
+      options: ["Yes", "No"]
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: The quick-menu.json (if any)
+      render: json
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is missing or wrong?
+      description: Include the entry under "Problems" in the pane, if one is shown.
+    validations:
+      required: true

@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in the quick menu does not work as described.
+labels: [bug]
+body:
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where do you run Claude Code?
+      options: [Terminal, Desktop Code tab, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Entries under "Problems" in the pane, the plugins involved, screenshots.

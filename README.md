@@ -1,5 +1,8 @@
 # agent-quick-menu
 
+[![License: MIT](https://img.shields.io/github/license/agentic-workbench/agent-quick-menu)](LICENSE)
+[![CI](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml/badge.svg)](https://github.com/agentic-workbench/agent-quick-menu/actions/workflows/ci.yml)
+
 A quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.
 
 <!-- screenshot: docs/screenshot.png, to be added -->
@@ -69,6 +72,14 @@ The full format is in [docs/convention.md](docs/convention.md).
 make check                 # claude plugin validate + test, and tsc --noEmit when tsc is on PATH
 claude --plugin-dir .      # try the plugin from this checkout
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commits and tests, and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 
