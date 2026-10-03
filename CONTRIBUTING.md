@@ -4,11 +4,12 @@
 
 - `develop` is where work happens. `main` carries releases.
 - Branch from `develop` and open pull requests into `develop`. `develop` is merged into `main` for a release.
-- Releases follow [semantic versioning](https://semver.org). A release bumps `version` in `.claude-plugin/plugin.json`, adds its CHANGELOG section, merges `develop` into `main` and tags `v<version>`. Claude Code updates an install only when `version` changes, so every release must bump it. To try unreleased work, run it with `claude --plugin-dir .`.
+- Every change reaches `develop` and `main` through a pull request; neither branch takes direct pushes. Pull requests into `develop` are squash-merged, so the pull request title becomes the commit subject and the CHANGELOG line.
+- Releases follow [semantic versioning](https://semver.org) and are automatic. A pull request from `develop` into `main` makes the `version` check run `scripts/release.mjs prepare`, which pushes a `chore(release): <version>` commit to `develop` with the bumped `version` in `.claude-plugin/plugin.json` and the CHANGELOG section. Merging that pull request (a merge commit) tags `v<version>` and publishes the GitHub release. Before 1.0 a breaking change (`type!:`) raises the minor and anything else the patch. Claude Code updates an install only when `version` changes. To try unreleased work, run it with `claude --plugin-dir .`.
 
 ## Commits
 
-Use [Conventional Commits](https://www.conventionalcommits.org/): `feat(menu): ...`, `fix(band): ...`, `docs: ...`, `chore: ...`. Keep the subject short and in the imperative.
+Use [Conventional Commits](https://www.conventionalcommits.org/) for commits and pull request titles: `feat(menu): ...`, `fix(band): ...`, `docs: ...`, `chore: ...`. Keep the subject short and in the imperative. `feat` lands under Added, `fix` under Fixed, everything else under Changed.
 
 ## Checks
 
