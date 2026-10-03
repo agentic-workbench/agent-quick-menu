@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "agent-quick-menu",
+  "version": "0.1.0",
+  "description": "Quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.",
+  "author": {
+    "name": "dasganni",
+    "url": "https://github.com/dasganni"
+  },
+  "homepage": "https://github.com/dasganni/agent-quick-menu",
+  "repository": "https://github.com/dasganni/agent-quick-menu",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

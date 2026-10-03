@@ -1,0 +1,6 @@
+{
+  "description": "The quick-menu mod: /menu opens one pane with every plugin's commands and settings.",
+  "modules": [
+    "./quick-menu.tsx"
+  ]
+}
