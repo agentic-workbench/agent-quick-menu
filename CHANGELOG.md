@@ -4,6 +4,16 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-03
+
+### Added
+
+- PRIVACY.md, and documentation, support, privacy and terms links in `plugin.json` for the directory listing.
+
+### Changed
+
+- README states exactly what the `command.run` and `plugin.register` hooks see and that they change nothing else.
+
 ## [0.1.5] - 2026-10-03
 
 ### Changed
@@ -54,7 +64,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.2...v0.1.3

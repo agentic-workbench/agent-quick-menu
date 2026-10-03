@@ -1,6 +1,6 @@
 {
   "name": "agent-quick-menu",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Quick menu for Claude Code: every plugin's commands and settings, and Claude Code's own, in one pane and a band above the prompt.",
   "author": {
     "name": "dasganni",
@@ -23,5 +23,9 @@
     "settings",
     "quick-menu",
     "productivity"
-  ]
+  ],
+  "documentationUrl": "https://github.com/agentic-workbench/agent-quick-menu#readme",
+  "supportUrl": "https://github.com/agentic-workbench/agent-quick-menu/issues",
+  "privacyPolicyUrl": "https://github.com/agentic-workbench/agent-quick-menu/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/agentic-workbench/agent-quick-menu/blob/main/LICENSE"
 }

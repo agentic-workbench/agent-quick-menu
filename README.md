@@ -64,8 +64,8 @@ Then run `/reload-plugins` in a running session.
 
 - `ui.render` on `AbovePrompt`: adds its own row and keeps every other mod's band beneath it.
 - `ui.render` on its `Pane`: draws the menu.
-- `command.run` for `/menu` only: answers it and touches no other command.
-- `plugin.register`: only records the root of plugins loaded with `--plugin-dir`; it changes nothing.
+- `command.run`, matched to `/menu` only: answers `/menu` and `/menu refresh` itself. It never sees, changes or blocks any other command, including the ones it runs for you.
+- `plugin.register`: reads the name, root and provenance of each plugin as it loads, to find the `quick-menu.json` of plugins loaded with `--plugin-dir`. It passes every registration on unchanged and never alters or blocks a plugin, its settings, instructions, hooks or tool descriptions.
 - `session.start`: registers `/menu`, loads favourites and folds, and starts discovery.
 
 ## For plugin authors
@@ -104,6 +104,10 @@ claude --plugin-dir .      # try the plugin from this checkout
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commits and tests, and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Privacy
+
+See [PRIVACY.md](PRIVACY.md): the plugin collects and sends nothing.
 
 ## Security
 
