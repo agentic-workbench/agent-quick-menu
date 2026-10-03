@@ -6,11 +6,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
-- A `buttonStyle` setting (`agent-quick-menu.buttonStyle`, in the menu's own section and /config) picks the look of command buttons, the band's favourites and Expand all / Collapse all: `pill` (the default; a filled one-line chip that hugs its label, lighter under the pointer; command hints stay aligned through a fixed-width slot), `brackets` (the plain `[ label ]`) or `box` (a rounded three-row frame; the one-row band shows `pill` instead). Toggles, choices, stars and section titles keep their look. A change reloads the mod.
+- A `buttonStyle` setting (`agent-quick-menu.buttonStyle`, in the menu's own section and /config) picks the look of command buttons, the band's favourites and Expand all / Collapse all: `brackets` (the default, `[ label ]`), `pill` (a filled one-line chip that hugs its label, lighter under the pointer; command hints stay aligned through a fixed-width slot) or `box` (a rounded three-row frame; the one-row band shows `pill` instead). Toggles, choices, stars and section titles keep their look. A change reloads the mod.
 
 ### Changed
 
-- `buttonStyle` defaults to `pill`; unknown values fall back to it. In `box` style the star of a command row is centred next to the frame.
 - The band's `≣ menu` button (and hotkey `m`) toggles the menu: pressing it while the pane is open closes it. The label shows the state, `≣ menu ▾` open and `≣ menu ▸` closed, read from `$.ui.panes()` at each render and redrawn on `ui.close`, so closing with ×, Esc or a key is reflected. `/menu` still always opens or focuses it.
 - A section title is clickable: the chevron and the title are one button in the accent colour, `[ ▾ title ]`, so a press anywhere on it (or Enter) folds or unfolds the section; counts and `built-in` stay dim.
 

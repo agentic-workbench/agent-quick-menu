@@ -626,7 +626,7 @@ const BOX_BORDER = 'gray'
 const BOX_BORDER_HOVER = 'cyan'
 
 /** The `buttonStyle` option; pill unless the person picked another. */
-let buttonStyle: ButtonStyle = 'pill'
+let buttonStyle: ButtonStyle = 'brackets'
 const bandStyle = (): ButtonStyle => (buttonStyle === 'box' ? 'pill' : buttonStyle)
 
 /** Cells a styled button takes beyond its label, and the gap that follows it before the next element. */
@@ -1277,7 +1277,7 @@ let bandHotkeys = false
 
 export const register: Register = (on, options) => {
   bandHotkeys = options.bandHotkeys === true
-  buttonStyle = options.buttonStyle === 'brackets' || options.buttonStyle === 'box' ? options.buttonStyle : 'pill'
+  buttonStyle = options.buttonStyle === 'pill' || options.buttonStyle === 'box' ? options.buttonStyle : 'brackets'
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)

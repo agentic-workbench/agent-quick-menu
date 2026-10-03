@@ -1708,16 +1708,16 @@ describe('buttonStyle', () => {
     expect(await ui.find({ key: 'star:set:alpha.flag' })).toBeDefined()
   })
 
-  test('pill is the default; an unknown value falls back to it', async ($, on) => {
+  test('brackets is the default: no pill wrappers', async ($, on) => {
     stub(on, FAV_WORLD())
     await start($)
-    expect((await wrappers(await paneText($), 'pill:')).length).toBeGreaterThanOrEqual(4)
+    expect((await wrappers(await paneText($), 'pill:')).length).toBe(0)
   })
 
-  test('an unknown buttonStyle value is a pill', { options: { buttonStyle: 'round' } }, async ($, on) => {
+  test('an unknown buttonStyle value falls back to brackets', { options: { buttonStyle: 'round' } }, async ($, on) => {
     stub(on, FAV_WORLD())
     await start($)
-    expect((await wrappers(await paneText($), 'pill:')).length).toBeGreaterThanOrEqual(4)
+    expect((await wrappers(await paneText($), 'pill:')).length).toBe(0)
   })
 
   test('pill: each command sits in a slot of longest+2 cells, so the hints line up', { options: { buttonStyle: 'pill' } }, async ($, on) => {
