@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "title": "agent-quick-menu plugin menu file",
+  "description": "A plugin's .claude-plugin/quick-menu.json: quick-launch commands and settings shown in the quick menu.",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1, "description": "Schema version. An unknown version is skipped with a notice." },
+    "title": { "type": "string", "description": "Section heading; default the plugin name." },
+    "commands": {
+      "type": "array",
+      "description": "Quick-launch commands, shown as buttons.",
+      "items": {
+        "type": "object",
+        "required": ["command"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1, "description": "Command name as / takes it, without the slash." },
+          "label": { "type": "string", "description": "Button text; default the command." },
+          "args": { "type": "string", "description": "Arguments passed as typed." },
+          "description": { "type": "string", "description": "Dimmed help text." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "settings": {
+      "type": "array",
+      "description": "userConfig field names of this plugin, in display order. Omitted: all rows. []: none.",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "additionalProperties": false
+}

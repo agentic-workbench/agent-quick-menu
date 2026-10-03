@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dasganni/agent-quick-menu/main/schema/quick-menu.schema.json",
+  "version": 1,
+  "title": "Quick menu",
+  "commands": [
+    { "command": "menu", "label": "Refresh", "args": "refresh", "description": "Discover plugin menus again" }
+  ],
+  "settings": []
+}
