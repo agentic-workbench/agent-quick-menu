@@ -4,6 +4,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-03
+
+### Fixed
+
+- `plugin.json` names its `types` contract again; without it `claude plugin validate` refused the module's `$.state` keys. The gate now validates the manifest as well as the marketplace.
+
 ## [0.1.6] - 2026-10-03
 
 ### Added
@@ -64,7 +70,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.3...v0.1.4
