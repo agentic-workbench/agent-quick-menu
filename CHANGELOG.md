@@ -6,7 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Added
 
-- Settings rows show their description dim after the value, clipped to the pane width and dropped under 8 cells; the filter matches it.
+- Settings rows show their description dim after the value, clipped to the pane width and dropped under 8 cells; the filter matches it. A dim ` · ` separates it from the value or `/command` hint, and it is italic and truncated with `…` so it never takes a second row.
 
 ## [0.1.11] - 2026-10-03
 

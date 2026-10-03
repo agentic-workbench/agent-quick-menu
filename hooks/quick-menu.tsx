@@ -724,7 +724,7 @@ function renderSetting(
   }
   // The description takes what is left of the line after star, label, value or editor and a note; with under 8 cells left it is dropped.
   const valueWidth = row.isLocked ? width(`${shown}  managed`) : row.kind === 'boolean' && !isSecret ? 5 + (row.value ? 0 : 1) : width(shown) + (row.kind === 'choice' ? 2 : 0)
-  const used = 2 + width(label) + 2 + valueWidth + (note ? 2 + width(note.text) : 0) + 2
+  const used = 2 + width(label) + 2 + valueWidth + (note ? 2 + width(note.text) : 0) + 3
   const room = fav.columns - used
   const help = row.description && room >= 8 ? clip(row.description.replace(/\s+/g, ' '), room) : null
   return (
@@ -732,7 +732,12 @@ function renderSetting(
       {renderStar($, ui, { kind: 'setting', plugin, key: row.key }, settingKey(row.key), fav)}
       <Text> </Text>
       {control}
-      {help !== null && <Text dimColor>{`  ${help}`}</Text>}
+      {help !== null && <Text dimColor>{' · '}</Text>}
+      {help !== null && (
+        <Box flexShrink={1}>
+          <Text dimColor italic wrap="truncate-end">{help}</Text>
+        </Box>
+      )}
       {note && <Text color="red">{`  ${note.text}`}</Text>}
     </Box>
   )
@@ -753,7 +758,7 @@ function renderCommand(
   const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}`, 60)
   // The help text takes what is left of the line after star, button, hint and tag; with under 8 cells left it is dropped.
   const used = 2 + Math.max(fav.cmdPad, width(c.label)) + BUTTON_CHROME + BUTTON_GAP + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
-  const room = fav.columns - used - 1
+  const room = fav.columns - used - 3
   const help = c.isAvailable && c.description && room >= 8 ? clip(c.description, room) : null
   const shownLabel = tag !== null && state.armed.id === rid ? `press again: /${clip(c.command, 64)}` : c.label
   return (
@@ -768,7 +773,12 @@ function renderCommand(
       {c.isAvailable && <Text>{' '.repeat(Math.max(0, fav.cmdPad - width(c.label)) + BUTTON_GAP)}</Text>}
       {c.isAvailable && <Text dimColor>{runs}</Text>}
       {tag !== null && <Text dimColor>{` ${tag}`}</Text>}
-      {help !== null && <Text dimColor>{` ${help}`}</Text>}
+      {help !== null && <Text dimColor>{' · '}</Text>}
+      {help !== null && (
+        <Box flexShrink={1}>
+          <Text dimColor italic wrap="truncate-end">{help}</Text>
+        </Box>
+      )}
       {state.queued[rid] && <Text dimColor> queued</Text>}
     </Box>
   )

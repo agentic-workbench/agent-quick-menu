@@ -1370,11 +1370,16 @@ describe('security: what a button runs', () => {
   test('a command description is dim text after the hint, clipped so the row fits one line', async ($, on) => {
     stub(on, describedWorld())
     await start($)
-    const wide = (await textsAt($, 60)).find(t => t.includes('Runs the whole'))!
+    const ui = await paneAt($, 60)
+    const texts = await textsOf(ui)
+    const wide = texts.find(t => t.includes('Runs the whole'))!
     expect(wide).toBeDefined()
-    // star and space 2, `[ Go ]` 6, ` /go` 4, then the help text itself
-    expect(12 + [...wide].length).toBeLessThanOrEqual(60)
+    // star and space 2, `[ Go ]` 6, ` /go` 4, ` · ` 3, then the help text itself
+    expect(15 + [...wide].length).toBeLessThanOrEqual(60)
     expect(wide.endsWith('…')).toBe(true)
+    const t = (await ui.findAll({ type: 'Text' })).find((x: any) => /Runs the whole/.test(x.text))
+    expect(t.props).toMatchObject({ dimColor: true, italic: true, wrap: 'truncate-end' })
+    expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
 
   test('a command description is dropped when the width is short', async ($, on) => {
@@ -1398,7 +1403,9 @@ describe('security: what a button runs', () => {
     expect([...wide].length).toBeLessThanOrEqual(70)
     expect(wide.endsWith('…')).toBe(true)
     const t = (await ui.findAll({ type: 'Text' })).find((x: any) => /Picks the speed/.test(x.text))
-    expect(t.props.dimColor).toBe(true)
+    expect(t.props).toMatchObject({ dimColor: true, italic: true, wrap: 'truncate-end' })
+    const texts = await textsOf(ui)
+    expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
 
   test('a locked setting shows managed, then the description', async ($, on) => {
@@ -1406,7 +1413,8 @@ describe('security: what a button runs', () => {
     await start($)
     const texts = await textsAt($, 100)
     expect(texts.some(t => t.includes('managed'))).toBe(true)
-    expect(texts).toContain('  Set by policy')
+    expect(texts).toContain('Set by policy')
+    expect(texts[texts.indexOf('Set by policy') - 1]).toBe(' · ')
   })
 
   test('a setting description is dropped when under 8 cells remain', async ($, on) => {
