@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-03
+
 ### Added
 
 - A `buttonStyle` setting (`agent-quick-menu.buttonStyle`, in the menu's own section and /config) picks the look of command buttons, the band's favourites and Expand all / Collapse all: `brackets` (the default, `[ label ]`), `pill` (a filled one-line chip that hugs its label, lighter under the pointer; command hints stay aligned through a fixed-width slot) or `box` (a rounded three-row frame; the one-row band shows `pill` instead). Toggles, choices, stars and section titles keep their look. A change reloads the mod.
@@ -93,7 +95,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.5...v0.1.6
