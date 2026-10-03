@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { ConfigRow, ConfigValue, EngineInterface, Register } from 'claude-code'
 
-import type { MenuCommand, MenuFile, MenuProblem, MenuSection } from '../types'
+import type { MenuCommand, MenuFile, MenuProblem, MenuSection, SectionCommand } from '../types'
 
 export const PANE_ID = 'quick-menu'
 const MENU_FILE = '.claude-plugin/quick-menu.json'
@@ -195,26 +195,175 @@ async function openMenu($: EngineInterface, args: string): Promise<{ text: strin
   return { text: 'Quick menu opened' }
 }
 
+type Note = { kind: 'deny' | 'error'; text: string }
+type RowState = { queued: Record<string, true>; notes: Record<string, Note> }
+
+const rowState = atom({ plugin: 'agent-quick-menu', key: 'rowState' } as const, {
+  queued: {},
+  notes: {},
+} as RowState)
+
+const commandKey = (plugin: string, c: SectionCommand): string => `cmd:${plugin}:${c.command}:${c.args ?? ''}`
+const settingKey = (key: string): string => `set:${key}`
+
+const toastLine = (text: string): string => text.split('\n')[0].slice(0, 200)
+
+async function setNote($: EngineInterface, id: string, note: Note | null): Promise<void> {
+  await update($, rowState, s => {
+    const notes = { ...s.notes }
+    if (note) notes[id] = note
+    else delete notes[id]
+    return { ...s, notes }
+  })
+}
+
+async function setQueued($: EngineInterface, id: string, isQueued: boolean): Promise<void> {
+  await update($, rowState, s => {
+    const queued = { ...s.queued }
+    if (isQueued) queued[id] = true
+    else delete queued[id]
+    return { ...s, queued }
+  })
+}
+
+async function runCommand($: EngineInterface, plugin: string, c: SectionCommand): Promise<void> {
+  const id = commandKey(plugin, c)
+  if ((await read($, rowState)).queued[id]) return
+  await setQueued($, id, true)
+  $.ui.invalidate('ui.render')
+  try {
+    const result = await $.command.run({ command: c.command, ...(c.args !== undefined && { args: c.args }) })
+    if (result.text) $.ui.toast(toastLine(result.text))
+  } catch (err) {
+    $.ui.toast(toastLine(message(err)))
+  } finally {
+    await setQueued($, id, false)
+    $.ui.invalidate('ui.render')
+  }
+}
+
+async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigValue): Promise<void> {
+  const id = settingKey(row.key)
+  await setNote($, id, null)
+  try {
+    const result = await $.config.set({ key: row.key, value })
+    if (result.deny !== undefined) await setNote($, id, { kind: 'deny', text: result.deny })
+  } catch (err) {
+    await setNote($, id, { kind: 'error', text: message(err) })
+  }
+  $.ui.invalidate('ui.render')
+}
+
+async function submitNumber($: EngineInterface, row: ConfigRow, raw: string): Promise<void> {
+  const n = Number(raw)
+  if (raw.trim() === '' || !Number.isFinite(n)) {
+    await setNote($, settingKey(row.key), { kind: 'error', text: `"${raw}" is not a number` })
+    $.ui.invalidate('ui.render')
+    return
+  }
+  await writeSetting($, row, n)
+}
+
+type Ui = ReturnType<EngineInterface['ui']['resolve']>
+
+function renderSetting($: EngineInterface, ui: Ui, row: ConfigRow, notes: Record<string, Note>) {
+  const { Box, Text, Button, Select, Input } = ui
+  const id = settingKey(row.key)
+  const note = notes[id]
+  const shown = Array.isArray(row.value) ? row.value.join(', ') : String(row.value)
+  let control
+  if (row.isLocked) {
+    control = <Text key={id}>{`${row.label}: ${shown} (managed)`}</Text>
+  } else if (row.kind === 'boolean') {
+    control = (
+      <Button
+        key={id}
+        label={`${row.label}: ${row.value ? 'on' : 'off'}`}
+        onPress={() => void writeSetting($, row, !row.value)}
+      />
+    )
+  } else if (row.kind === 'choice' && row.options && row.options.length > 0) {
+    control = (
+      <Select
+        key={id}
+        label={`${row.label}: `}
+        options={row.options.map(value => ({ value }))}
+        value={shown}
+        onSelect={value => void writeSetting($, row, value)}
+      />
+    )
+  } else {
+    control = (
+      <Input
+        key={id}
+        label={`${row.label}: `}
+        value={shown}
+        onSubmit={value => void (row.kind === 'number' ? submitNumber($, row, value) : writeSetting($, row, value))}
+      />
+    )
+  }
+  return (
+    <Box key={`row:${id}`} flexDirection="row">
+      {control}
+      {note && <Text color="red">{`  ${note.text}`}</Text>}
+    </Box>
+  )
+}
+
+function renderCommand($: EngineInterface, ui: Ui, plugin: string, c: SectionCommand, state: RowState) {
+  const { Box, Text, Button } = ui
+  const id = commandKey(plugin, c)
+  return (
+    <Box key={`row:${id}`} flexDirection="row">
+      {c.isAvailable ? (
+        <Button key={id} label={c.label} onPress={() => void runCommand($, plugin, c)} />
+      ) : (
+        <Text key={id} dimColor>{`${c.label} (not available)`}</Text>
+      )}
+      {state.queued[id] && <Text dimColor>  queued</Text>}
+      {c.description && <Text dimColor>{`  ${c.description}`}</Text>}
+    </Box>
+  )
+}
+
+function settingRows(section: MenuSection, rows: readonly ConfigRow[]): ConfigRow[] {
+  const own = rows.filter(r => r.key.startsWith(`${section.plugin}.`))
+  if (section.settings === null) return own
+  const out: ConfigRow[] = []
+  for (const field of section.settings) {
+    const row = own.find(r => r.key === `${section.plugin}.${field}`)
+    if (row) out.push(row)
+  }
+  return out
+}
+
 async function renderMenu($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
-  const { Box, Text } = $.ui.resolve(e)
-  const [s, p] = [await read($, sections), await read($, problems)]
+  const ui = $.ui.resolve(e)
+  const { Box, Text } = ui
+  const [s, p, state] = [await read($, sections), await read($, problems), await read($, rowState)]
+  let rows: ConfigRow[] = []
+  try {
+    rows = await $.config.list()
+  } catch {
+    rows = []
+  }
+  const engineRows = rows.filter(r => r.provider.plugin === 'engine')
   return (
     <Box flexDirection="column">
-      {s.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
+      {s.length === 0 && engineRows.length === 0 && <Text dimColor>Quick menu: nothing here yet.</Text>}
       {s.map(section => (
         <Box key={section.plugin} flexDirection="column">
           <Text bold>{section.title}</Text>
-          {section.commands.map(c => (
-            <Text key={c.command + (c.args ?? '')} dimColor={!c.isAvailable}>
-              {`  /${c.command}${c.args ? ` ${c.args}` : ''} ${c.label}${c.isAvailable ? '' : ' (not available)'}`}
-            </Text>
-          ))}
-          {section.settings && section.settings.length > 0 && (
-            <Text dimColor>{`  settings: ${section.settings.join(', ')}`}</Text>
-          )}
-          {section.settings === null && <Text dimColor>  settings: all</Text>}
+          {section.commands.map(c => renderCommand($, ui, section.plugin, c, state))}
+          {settingRows(section, rows).map(r => renderSetting($, ui, r, state.notes))}
         </Box>
       ))}
+      {engineRows.length > 0 && (
+        <Box key="claude-code" flexDirection="column">
+          <Text bold>Claude Code</Text>
+          {engineRows.map(r => renderSetting($, ui, r, state.notes))}
+        </Box>
+      )}
       {p.length > 0 && <Text bold>Problems</Text>}
       {p.map((x, i) => (
         <Text key={i} color="red">{`  ${x.plugin}: ${x.message}`}</Text>

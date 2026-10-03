@@ -20,8 +20,7 @@
           "label": { "type": "string", "description": "Button text; default the command." },
           "args": { "type": "string", "description": "Arguments passed as typed." },
           "description": { "type": "string", "description": "Dimmed help text." }
-        },
-        "additionalProperties": false
+        }
       }
     },
     "settings": {
@@ -29,6 +28,5 @@
       "description": "userConfig field names of this plugin, in display order. Omitted: all rows. []: none.",
       "items": { "type": "string", "minLength": 1 }
     }
-  },
-  "additionalProperties": false
+  }
 }

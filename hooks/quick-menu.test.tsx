@@ -20,7 +20,9 @@ type World = {
   files?: Record<string, string>
   env?: Record<string, string>
   commands?: string[]
-  rows?: { key: string }[]
+  rows?: Record<string, unknown>[]
+  run?: (e: { command: string; args?: string }) => unknown
+  set?: (e: { key: string; value: unknown }) => unknown
 }
 
 function stub(on: any, w: World) {
@@ -44,6 +46,13 @@ function stub(on: any, w: World) {
     value: (w.commands ?? []).map(name => ({ name, description: '', source: 'plugin' })),
   }))
   on('config.list', () => ({ value: w.rows ?? [] }))
+  on('command.run', (_$: unknown, e: { command: string; args?: string }) => {
+    if (e.command === 'menu') return undefined
+    return w.run ? w.run(e) : { text: 'ok' }
+  })
+  on('config.set', (_$: unknown, e: { key: string; value: unknown }) =>
+    w.set ? w.set(e) : { value: e.value },
+  )
 }
 
 async function start($: any) {
@@ -59,6 +68,16 @@ async function paneText($: any): Promise<any> {
     requestId: 'quick-menu',
   })
 }
+
+const row = (key: string, extra: Record<string, unknown> = {}) => ({
+  key,
+  label: key.split('.').pop() as string,
+  kind: 'text',
+  value: '',
+  provider: { plugin: key.includes('.') ? key.split('.')[0] : 'engine', tier: 'core' },
+  isLocked: false,
+  ...extra,
+})
 
 const file = (o: unknown) => JSON.stringify(o)
 
@@ -108,9 +127,10 @@ describe('discovery', () => {
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /Alpha/ })).toBeDefined()
-    expect(await ui.find({ text: /\/a-run --all a-run$/ })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
     expect(await ui.find({ text: /Gone \(not available\)/ })).toBeDefined()
-    expect(await ui.find({ text: /settings: mode/ })).toBeDefined()
+    expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(1)
     expect(await ui.find({ text: /off/ })).toBeUndefined()
   })
 
@@ -140,12 +160,14 @@ describe('discovery', () => {
     stub(on, {
       enabled: { 'cfg@m': true, 'bare@m': true },
       registry: { 'cfg@m': [{ installPath: '/p/cfg' }], 'bare@m': [{ installPath: '/p/bare' }] },
-      rows: [{ key: 'cfg.token' }, { key: 'cfg.mode' }, { key: 'other.x' }, { key: 'theme' }],
+      rows: [row('cfg.token'), row('cfg.mode'), row('other.x'), row('theme')],
     })
     await start($)
     const ui = await paneText($)
     expect(await ui.find({ text: /^cfg$/ })).toBeDefined()
-    expect(await ui.find({ text: /settings: token, mode/ })).toBeDefined()
+    expect(await ui.find({ key: 'set:cfg.token' })).toBeDefined()
+    expect(await ui.find({ key: 'set:cfg.mode' })).toBeDefined()
+    expect(await ui.find({ key: 'set:other.x' })).toBeUndefined()
     expect(await ui.find({ text: /bare/ })).toBeUndefined()
   })
 
@@ -175,5 +197,154 @@ describe('discovery', () => {
     world.files = { '/p/late/.claude-plugin/quick-menu.json': file({ version: 1 }) }
     const after = await $.command.run({ command: 'menu', args: 'refresh' })
     expect(after.text).toMatch(/1 sections, 0 problems/)
+  })
+})
+
+const ALPHA = {
+  enabled: { 'alpha@mk': true },
+  registry: { 'alpha@mk': [{ installPath: '/p/alpha' }] },
+}
+const alphaFile = (o: unknown) => ({ '/p/alpha/.claude-plugin/quick-menu.json': file(o) })
+
+describe('commands', () => {
+  test('press runs $.command.run with command and args, shows queued, then toasts the first line', async ($, on) => {
+    let release: (v: unknown) => void = () => {}
+    const calls: unknown[] = []
+    const toasts: string[] = []
+    on('ui.toast', (_$: unknown, e: { text: string }) => {
+      toasts.push(e.text)
+    })
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1, commands: [{ command: 'go', args: '--all', description: 'does it' }] }),
+      commands: ['go'],
+      run: e => {
+        calls.push(e)
+        return new Promise(res => {
+          release = res
+        })
+      },
+    })
+    await start($)
+    const ui = await paneText($)
+    const pressed = ui.press({ key: 'cmd:alpha:go:--all' })
+    await new Promise(r => setTimeout(r, 20))
+    expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
+    expect(await ui.find({ text: /queued/ })).toBeDefined()
+    release({ text: 'first line\nsecond' })
+    await pressed
+    await new Promise(r => setTimeout(r, 100))
+    expect(toasts).toEqual(['first line'])
+    expect(await ui.find({ text: /queued/ })).toBeUndefined()
+  })
+
+  test('an unavailable command shows "not available" and has no action', async ($, on) => {
+    stub(on, { ...ALPHA, files: alphaFile({ version: 1, commands: [{ command: 'gone' }] }), commands: [] })
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect(await ui.find({ text: /gone \(not available\)/ })).toBeDefined()
+  })
+})
+
+describe('settings', () => {
+  const setup = (rows: Record<string, unknown>[], extra: Partial<World> = {}) => ({
+    ...ALPHA,
+    files: alphaFile({ version: 1 }),
+    rows,
+    ...extra,
+  })
+
+  test('boolean toggles, choice selects, text and number inputs write via $.config.set', async ($, on) => {
+    const sets: unknown[] = []
+    stub(
+      on,
+      setup(
+        [
+          row('alpha.flag', { kind: 'boolean', value: false }),
+          row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] }),
+          row('alpha.name', { kind: 'text', value: 'x' }),
+          row('alpha.count', { kind: 'number', value: 1 }),
+        ],
+        { set: e => (sets.push(e), { value: e.value }) },
+      ),
+    )
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    await ui.select({ key: 'set:alpha.mode', value: 'b' })
+    await ui.input({ key: 'set:alpha.name', text: 'hello' })
+    await ui.input({ key: 'set:alpha.count', text: '42' })
+    expect(sets).toMatchObject([
+      { key: 'alpha.flag', value: true },
+      { key: 'alpha.mode', value: 'b' },
+      { key: 'alpha.name', value: 'hello' },
+      { key: 'alpha.count', value: 42 },
+    ])
+  })
+
+  test('an invalid number shows an error and does not call set', async ($, on) => {
+    const sets: unknown[] = []
+    stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { set: e => (sets.push(e), { value: e.value }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.input({ key: 'set:alpha.count', text: 'abc' })
+    expect(sets).toEqual([])
+    expect(await ui.find({ text: /not a number/ })).toBeDefined()
+  })
+
+  test('a deny reason is shown beside the row', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: 'policy says no' }) }))
+    await start($)
+    const ui = await paneText($)
+    await ui.press({ key: 'set:alpha.flag' })
+    expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+  })
+
+  test('a locked row shows "managed" and has no editor', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: true, isLocked: true })]))
+    await start($)
+    const ui = await paneText($)
+    expect(await ui.find({ text: /managed/ })).toBeDefined()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  })
+
+  test('settings follow the file list order and skip unlisted rows', async ($, on) => {
+    stub(on, {
+      ...ALPHA,
+      files: alphaFile({ version: 1, settings: ['b', 'a'] }),
+      rows: [row('alpha.a'), row('alpha.b'), row('alpha.c')],
+    })
+    await start($)
+    const ui = await paneText($)
+    const keys = (await ui.findAll({ type: 'Input' })).map((x: any) => x.key)
+    expect(keys).toEqual(['set:alpha.b', 'set:alpha.a'])
+  })
+})
+
+describe('sections', () => {
+  test('Claude Code lists engine rows; order is files, settings-only, Claude Code, Problems', async ($, on) => {
+    stub(on, {
+      enabled: { 'zed@m': true, 'cfg@m': true, 'bad@m': true, 'alpha@m': true },
+      registry: {
+        'zed@m': [{ installPath: '/p/zed' }],
+        'cfg@m': [{ installPath: '/p/cfg' }],
+        'bad@m': [{ installPath: '/p/bad' }],
+        'alpha@m': [{ installPath: '/p/alpha' }],
+      },
+      files: {
+        '/p/zed/.claude-plugin/quick-menu.json': file({ version: 1, title: 'Zed' }),
+        '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, title: 'Alpha' }),
+        '/p/bad/.claude-plugin/quick-menu.json': '{x',
+      },
+      rows: [row('cfg.k'), row('theme', { kind: 'choice', value: 'dark', options: ['dark', 'light'] })],
+    })
+    await start($)
+    const ui = await paneText($)
+    const heads = (await ui.findAll({ type: 'Text' }))
+      .map((x: any) => x.text as string)
+      .filter(t => ['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'].includes(t))
+    expect(heads).toEqual(['Alpha', 'Zed', 'cfg', 'Claude Code', 'Problems'])
+    expect(await ui.find({ key: 'set:theme' })).toBeDefined()
   })
 })

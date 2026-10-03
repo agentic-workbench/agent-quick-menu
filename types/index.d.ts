@@ -38,11 +38,18 @@ export type MenuSection = {
 /** A plugin whose menu file or registry entry could not be used. */
 export type MenuProblem = { plugin: string; message: string }
 
+/** Transient per-row pane state: commands waiting on `$.command.run`, and the deny or error beside a row. */
+export type RowState = {
+  queued: Record<string, true>
+  notes: Record<string, { kind: 'deny' | 'error'; text: string }>
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'agent-quick-menu': {
       sections: MenuSection[]
       problems: MenuProblem[]
+      rowState: RowState
     }
   }
 }
