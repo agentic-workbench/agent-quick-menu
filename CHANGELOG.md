@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-03
+
 ### Added
 
 - Settings rows show their description dim after the value, clipped to the pane width and dropped under 8 cells; the filter matches it. A dim ` · ` separates it from the value or `/command` hint, and it is italic and truncated with `…` so it never takes a second row.
@@ -111,7 +113,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.8...v0.1.9
