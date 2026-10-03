@@ -4,6 +4,8 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-03
+
 ### Added
 
 - `/menu` pane with one section per plugin: its commands as buttons and its `userConfig` settings as a label/value table.
@@ -20,9 +22,5 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
-### Changed
-
-- The pane is clearer: aligned label/value rows, `[ on ]` / `[ off ]` toggles, and `value ▾` choices; the digits no longer renumber when a favourite is missing.
-- Settings of marketplace plugins (`name@marketplace`) are matched by the plugin's bare name.
-- `USERPROFILE` is used when `HOME` is unset, and `CLAUDE_CODE_PLUGIN_DIRS` may be separated by `;`.
-- Install instructions use `/plugin marketplace add`; the private-repository note and the `claude -p` sentence are gone.
+[Unreleased]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/agentic-workbench/agent-quick-menu/releases/tag/v0.1.0
