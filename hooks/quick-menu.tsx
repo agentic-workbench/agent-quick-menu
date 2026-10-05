@@ -447,6 +447,8 @@ async function openMenu($: EngineInterface, args: string): Promise<{ text: strin
     startDiscovery($, true)
     return { text: 'Quick menu: discovering plugin menus again' }
   }
+  // A load without a session.start (an update or enable mid-session) has not discovered yet: the pane would list no commands.
+  if (discoveryRun === 0) startDiscovery($)
   await openPane($)
   return { text: 'Quick menu opened' }
 }

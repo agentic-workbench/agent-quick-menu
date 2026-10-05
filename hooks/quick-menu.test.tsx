@@ -411,6 +411,20 @@ describe('discovery', () => {
     expect(toasts.at(-1)).toMatch(/1 sections, 0 problems/)
   })
 
+  test('/menu discovers on its own when the plugin was loaded without a session.start', async ($, on) => {
+    const clock = mock.clock(on)
+    stub(on, {
+      enabled: { 'alpha@m': true },
+      registry: { 'alpha@m': [{ installPath: '/p/alpha' }] },
+      files: { '/p/alpha/.claude-plugin/quick-menu.json': file({ version: 1, commands: [{ command: 'a-run', args: '--all' }] }) },
+      commands: ['a-run'],
+    })
+    await $.command.run({ command: 'menu' } as never)
+    await clock.settle()
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'cmd:alpha:a-run:--all' })).toBeDefined()
+  })
+
   test('a --plugin-dir plugin without a known root is listed from $.command.list() with its commands only', async ($, on) => {
     const runs: unknown[] = []
     stub(on, {
