@@ -1,7 +1,6 @@
 name: Release
 
-# A pull request from develop into main gets its version bump and CHANGELOG section pushed to develop
-# (job `version`, a required check on main); merging it tags the merge commit and publishes the release.
+# The release logic lives in agentic-workbench/workflows (plugin-release.yml); this is only the caller.
 on:
   pull_request:
     branches: [main]
@@ -9,63 +8,12 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-${{ github.event_name }}-${{ github.ref }}
 
 jobs:
-  version:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Only develop is merged into main
-        if: github.head_ref != 'develop' || github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo "::error::Pull requests into main come from develop of this repository."
-          exit 1
-      # The deploy key is the only actor allowed to push to develop without a pull request.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: develop
-          fetch-depth: 0
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-      - name: Bump version and CHANGELOG on develop
-        run: |
-          node scripts/release.mjs prepare
-          if git diff --quiet; then exit 0; fi
-          version=$(node -p "require('./.claude-plugin/plugin.json').version")
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -am "chore(release): $version"
-          git push origin HEAD:develop
-
-  publish:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-      - name: Tag and publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(node -p "require('./.claude-plugin/plugin.json').version")
-          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "v$version is already released"
-            exit 0
-          fi
-          node scripts/release.mjs notes "$version" > "$RUNNER_TEMP/notes.md"
-          gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "agent-quick-menu $version" --notes-file "$RUNNER_TEMP/notes.md"
+  release:
+    uses: agentic-workbench/workflows/.github/workflows/plugin-release.yml@e42f60c6d3702955f01f442b47de5f23321d7c5b # main
+    secrets: inherit
