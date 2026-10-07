@@ -200,17 +200,27 @@ function chooseEntry(entries: unknown): Record<string, unknown> | undefined {
   return here ?? objects.find(x => x.scope === 'user')
 }
 
-async function registryTargets($: EngineInterface, issues: MenuProblem[]): Promise<Target[]> {
-  let enabled: string[] = []
+/** The bare names of the plugins that are loaded: those with a registered command or a `userConfig` row (engine rows excluded). */
+async function loadedPlugins($: EngineInterface, listed: readonly CommandInfo[], issues: MenuProblem[]): Promise<Set<string>> {
+  const names = new Set<string>()
+  for (const c of listed) if (c.source === 'plugin' && c.plugin) names.add(bareName(c.plugin))
   try {
-    const settings = (await $.settings.read()) as { enabledPlugins?: Record<string, unknown> }
-    enabled = Object.entries(settings.enabledPlugins ?? {})
-      .filter(([, enabledFlag]) => enabledFlag === true)
-      .map(([id]) => id)
+    for (const row of await $.config.list()) {
+      if (row.provider.plugin !== ENGINE) names.add(bareName(row.key.split('.')[0] ?? row.key))
+    }
   } catch (err) {
-    issues.push({ plugin: 'settings', message: `cannot read settings: ${message(err)}` })
+    issues.push({ plugin: 'config', message: `cannot list config rows: ${message(err)}` })
   }
-  if (enabled.length === 0) return []
+  return names
+}
+
+async function registryTargets(
+  $: EngineInterface,
+  listed: readonly CommandInfo[],
+  issues: MenuProblem[],
+): Promise<Target[]> {
+  const loaded = await loadedPlugins($, listed, issues)
+  if (loaded.size === 0) return []
   const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
   let base: string
   if (configDir) {
@@ -234,9 +244,18 @@ async function registryTargets($: EngineInterface, issues: MenuProblem[]): Promi
     return []
   }
   const targets: Target[] = []
-  for (const id of enabled) {
+  // Several marketplaces can ship one bare name: the entry installed for this project or local scope wins, else the first user one.
+  const chosen = new Map<string, { id: string; entry: Record<string, unknown>; isHere: boolean }>()
+  for (const id of Object.keys(plugins)) {
+    const name = bareName(id)
     const entry = chooseEntry(plugins[id])
-    if (!entry || typeof entry.installPath !== 'string') continue
+    if (!loaded.has(name) || !entry) continue
+    const isHere = entry.scope !== 'user'
+    const held = chosen.get(name)
+    if (!held || (isHere && !held.isHere)) chosen.set(name, { id, entry, isHere })
+  }
+  for (const { id, entry } of chosen.values()) {
+    if (typeof entry.installPath !== 'string') continue
     if (!isAbsolutePath(entry.installPath)) {
       issues.push({ plugin: bareName(id), message: 'installPath is not absolute; skipped' })
       continue
@@ -377,19 +396,18 @@ async function refreshListing($: EngineInterface): Promise<CommandInfo[] | null>
  */
 async function discover($: EngineInterface): Promise<{ sections: MenuSection[]; problems: MenuProblem[] }> {
   const issues: MenuProblem[] = []
-  const all = [
-    { name: $.plugin.name, root: $.plugin.root },
-    ...(await dirTargets($, issues)),
-    ...(await registryTargets($, issues)),
-  ]
-  const targets = all.filter((t, i) => all.findIndex(o => o.name === t.name) === i)
-
   let listed: CommandInfo[] = []
   try {
     listed = await $.command.list()
   } catch (err) {
     issues.push({ plugin: 'commands', message: `cannot list commands: ${message(err)}` })
   }
+  const all = [
+    { name: $.plugin.name, root: $.plugin.root },
+    ...(await dirTargets($, issues)),
+    ...(await registryTargets($, listed, issues)),
+  ]
+  const targets = all.filter((t, i) => all.findIndex(o => o.name === t.name) === i)
 
   const byName = new Map(listed.map(c => [c.name, c]))
   const result: MenuSection[] = []

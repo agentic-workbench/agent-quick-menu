@@ -15,6 +15,7 @@ const HOME = '/home/u'
 const REGISTRY = `${HOME}/.claude/plugins/installed_plugins.json`
 
 type World = {
+  /** Enabled plugins by registry id: each one has registered a command, as a loaded plugin does. */
   enabled?: Record<string, boolean>
   registry?: Record<string, Record<string, unknown>[]>
   files?: Record<string, string>
@@ -74,7 +75,6 @@ function stub(on: any, w: World) {
     store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }
   })
-  on('settings.read', () => ({ value: { enabledPlugins: w.enabled ?? {} } }))
   on('env.get', (_$: unknown, e: { name: string }) => ({ value: vars()[e.name] }))
   const isSelf = (path: string): boolean => w.self !== undefined && !(path in files()) && path.endsWith(MENU_FILE)
   on('fs.exists', (_$: unknown, e: { path: string }) => ({ value: e.path in files() || isSelf(e.path) }))
@@ -93,6 +93,9 @@ function stub(on: any, w: World) {
     return { value: [
       ...(w.commands ?? []).map(name => ({ name, description: '', source: 'plugin', plugin: w.commandOwner ?? 'alpha@mk' })),
       ...(w.builtins ?? []).map(name => ({ name, description: '', source: 'builtin' })),
+      ...Object.keys(w.enabled ?? {})
+        .filter(id => w.enabled?.[id])
+        .map(id => ({ name: `${id.split('@')[0]}:loaded`, description: '', source: 'plugin', plugin: id })),
       ...(w.pluginCommands ?? []).map(c => ({ description: '', source: 'plugin', ...c })),
     ] }
   })
@@ -269,6 +272,42 @@ describe('discovery', () => {
     expect(await ui.find({ text: /off/ })).toBeUndefined()
   })
 
+  test('a plugin in the registry with no commands and no config rows is not discovered', async ($, on) => {
+    stub(on, {
+      registry: { 'idle@mk': [{ installPath: '/p/idle' }] },
+      files: { '/p/idle/.claude-plugin/quick-menu.json': file({ version: 1, title: 'Idle' }) },
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await ui.find({ text: /Idle/ })).toBeUndefined()
+  })
+
+  test('a plugin with only a config row is discovered through the registry', async ($, on) => {
+    stub(on, {
+      registry: { 'rowed@mk': [{ installPath: '/p/rowed' }] },
+      files: { '/p/rowed/.claude-plugin/quick-menu.json': file({ version: 1, title: 'Rowed' }) },
+      rows: [row('rowed.opt')],
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await titleOf(ui, /^Rowed/)).toBeDefined()
+  })
+
+  test('two marketplaces with one bare name give one section, from the first user-scope entry', async ($, on) => {
+    stub(on, {
+      enabled: { 'dup@a': true },
+      registry: { 'dup@a': [{ installPath: '/p/a' }], 'dup@b': [{ installPath: '/p/b' }] },
+      files: {
+        '/p/a/.claude-plugin/quick-menu.json': file({ version: 1, title: 'From A' }),
+        '/p/b/.claude-plugin/quick-menu.json': file({ version: 1, title: 'From B' }),
+      },
+    })
+    await start($)
+    const ui = await mountPane($)
+    expect(await titleOf(ui, /^From A/)).toBeDefined()
+    expect(await ui.find({ text: /From B/ })).toBeUndefined()
+  })
+
   test('invalid JSON, wrong version and bad command entry become problems', async ($, on) => {
     stub(on, {
       enabled: { 'a@m': true, 'b@m': true, 'c@m': true },
@@ -350,7 +389,7 @@ describe('discovery', () => {
     expect(await titles('/nowhere')).toContain('user · alpha')
     // No user entry and none for this cwd: the plugin is not read from a project it was installed for elsewhere.
     world.registry = { 'alpha@mk': [mixed[0]!, mixed[2]!] }
-    expect((await titles('/nowhere')).filter((t: string) => t.includes('alpha'))).toEqual([])
+    expect((await titles('/nowhere')).filter((t: string) => t.includes(' · alpha'))).toEqual([])
   })
 
   test('a builtin plugin with rows gets a settings-only section without a registry entry', async ($, on) => {
