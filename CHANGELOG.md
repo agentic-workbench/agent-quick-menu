@@ -2,6 +2,12 @@
 
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [semantic versioning](https://semver.org). Releases are cut automatically when `develop` is merged into `main`: `scripts/release.mjs` derives the version and the section from the Conventional Commit subjects since the last tag, bumps `version` in `.claude-plugin/plugin.json`, and the merge is tagged `v<version>`.
 
+## [0.1.18] - 2026-10-07
+
+### Fixed
+
+- Discovery no longer reads the settings files (#9)
+
 ## [0.1.17] - 2026-10-06
 
 ### Fixed
@@ -158,6 +164,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
+[0.1.18]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.14...v0.1.15
