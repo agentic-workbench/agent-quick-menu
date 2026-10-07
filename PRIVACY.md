@@ -3,7 +3,7 @@
 agent-quick-menu runs entirely inside Claude Code on your machine.
 
 - It collects no data and sends nothing over the network. It contains no analytics and names no hosts.
-- It reads only what it needs to draw the menu: Claude Code's settings (`enabledPlugins`), the plugin registry `installed_plugins.json`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, each plugin's `.claude-plugin/quick-menu.json`, the `.claude-plugin/plugin.json` of the folders named in `CLAUDE_CODE_PLUGIN_DIRS`, the list of commands Claude Code offers, and the rows `/config` shows (read again after a change to see whether it took). It reads no credentials.
+- It reads only what it needs to draw the menu: the plugin registry `installed_plugins.json`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, each plugin's `.claude-plugin/quick-menu.json`, the `.claude-plugin/plugin.json` of the folders named in `CLAUDE_CODE_PLUGIN_DIRS`, the list of commands Claude Code offers, and the rows `/config` shows (read again after a change to see whether it took). It reads no credentials.
 - It keeps your favourites and folded sections in Claude Code's plugin store on your machine. Uninstalling the plugin removes nothing else.
 - A command you run from the menu, or a setting you change with it, does what that command or setting does; see the README section "What this plugin does on your machine".
 
