@@ -1297,7 +1297,7 @@ describe('band', () => {
     { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
   ]
 
-  test('shows the menu button and favourites in order with digit hotkeys when bandHotkeys is on', { options: { bandHotkeys: true } }, async ($, on) => {
+  test('shows the menu button and favourites in order with digit hotkeys when bandDigits is on', { options: { bandDigits: true } }, async ($, on) => {
     const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
@@ -1333,7 +1333,7 @@ describe('band', () => {
     expect(sets).toMatchObject([{ key: 'alpha.flag', value: 'true' }])
   })
 
-  test('band width counts code points and keeps 4 cells for [-]', { options: { bandHotkeys: true } }, async ($, on) => {
+  test('band width counts code points and keeps 4 cells for [-]', { options: { bandDigits: true } }, async ($, on) => {
     const fav = [
       { kind: 'command', plugin: 'alpha', key: 'go --all' },
       { kind: 'command', plugin: 'alpha', key: 'stop' },
@@ -1352,7 +1352,7 @@ describe('band', () => {
     expect(await labels(25)).toEqual(['≣ menu ▸'])
   })
 
-  test('digit hotkeys sit on own-plugin commands, at the favourite\'s fixed position', { options: { bandHotkeys: true } }, async ($, on) => {
+  test('digit hotkeys sit on own-plugin commands, at the favourite\'s fixed position', { options: { bandDigits: true } }, async ($, on) => {
     const store = new Map<string, unknown>([['favourites', [
       { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
       { kind: 'command', plugin: 'alpha', key: 'stop' },
@@ -2020,7 +2020,7 @@ describe('security: digit hotkeys', () => {
     expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.hotkey)).toEqual(['m', undefined, undefined])
   })
 
-  test('on: the digit is the pinned position, gaps and foreign commands included', { options: { bandHotkeys: true } }, async ($, on) => {
+  test('on: the digit is the pinned position, gaps and foreign commands included', { options: { bandDigits: true } }, async ($, on) => {
     stub(on, world())
     emptyBase(on)
     await start($)

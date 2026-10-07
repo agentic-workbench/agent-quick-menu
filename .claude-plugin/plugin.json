@@ -11,9 +11,9 @@
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
-    "bandHotkeys": {
+    "bandDigits": {
       "type": "boolean",
-      "title": "Band hotkeys",
+      "title": "Band digits",
       "description": "Bind the digits 1-9 to the pinned commands of this menu's own plugins in the band above the prompt, by their place in the pinned list.",
       "default": false
     }

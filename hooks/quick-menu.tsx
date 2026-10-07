@@ -32,8 +32,8 @@ const inlineRootState = atom({ plugin: 'agent-quick-menu', key: 'inlineRoots' } 
 let sessionCwd = ''
 let sessionStarted = false
 let discoveryRun = 0
-/** The `bandHotkeys` option: digit hotkeys on the band's own-plugin commands; off unless the person turns it on. */
-let bandHotkeys = false
+/** The `bandDigits` option: digit hotkeys on the band's own-plugin commands; off unless the person turns it on. */
+let bandDigits = false
 /**
  * Roots of `--plugin-dir` plugins, learned from `plugin.register` (the only place the types hand out another plugin's `root`).
  * `plugin.register` fires once per load of the other plugin, never again when this module reloads, so the roots are kept in
@@ -1531,7 +1531,7 @@ async function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, nex
     const item = bandItem(f, d.all, d.rows, d.state)
     if (!item) continue
     // The digit is the favourite's own place in the pinned list, so a gap never renumbers the others.
-    const digit = bandHotkeys && item.isOwn && position < 9 ? position + 1 : undefined
+    const digit = bandDigits && item.isOwn && position < 9 ? position + 1 : undefined
     used += width(item.label) + (digit === undefined ? 0 : DIGIT_CELLS) + BUTTON_GAP
     if (used > e.props.bodyColumns) break
     items.push(digit === undefined ? item : { ...item, digit })
@@ -1565,7 +1565,7 @@ async function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, nex
 }
 
 export const register: Register = (on, options) => {
-  bandHotkeys = options.bandHotkeys === true
+  bandDigits = options.bandDigits === true
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)
