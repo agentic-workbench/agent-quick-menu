@@ -90,7 +90,7 @@ Then run `/reload-plugins` in a running session.
 
 **What it sets.** Only the `/config` rows you change in the pane. It sets no environment variables. It keeps favourites and folded sections in Claude Code's plugin store.
 
-**What it reads.** Your settings (`enabledPlugins`), the plugin registry `installed_plugins.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, each plugin's `.claude-plugin/quick-menu.json`, the `.claude-plugin/plugin.json` of the folders in `CLAUDE_CODE_PLUGIN_DIRS`, the list of commands Claude Code offers, and the rows `/config` shows. It sends nothing over the network and reads no credentials.
+**What it reads.** The plugin registry `installed_plugins.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`, the environment variables `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE` and `CLAUDE_CODE_PLUGIN_DIRS`, each plugin's `.claude-plugin/quick-menu.json`, the `.claude-plugin/plugin.json` of the folders in `CLAUDE_CODE_PLUGIN_DIRS`, the list of commands Claude Code offers, and the rows `/config` shows. It sends nothing over the network and reads no credentials.
 
 **Its hooks.**
 
