@@ -10,14 +10,6 @@
   "repository": "https://github.com/agentic-workbench/agent-quick-menu",
   "license": "MIT",
   "types": "./types/index.d.ts",
-  "userConfig": {
-    "bandDigits": {
-      "type": "boolean",
-      "title": "Band digits",
-      "description": "Bind the digits 1-9 to the pinned commands of this menu's own plugins in the band above the prompt, by their place in the pinned list.",
-      "default": false
-    }
-  },
   "keywords": [
     "menu",
     "commands",

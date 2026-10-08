@@ -20,7 +20,7 @@ Other plugins' `.claude-plugin/quick-menu.json` files decide which buttons the m
 
 ### What a press runs
 
-A button runs a slash command through Claude Code (`$.command.run`), only when you press it or a band favourite, with the command and arguments shown beside it. That includes Claude Code's built-in commands and commands of other plugins, not only the plugin's own. Such a button is tagged (`runs <plugin>`, `runs a built-in`) and needs a second press within 5 seconds (`press again: /command`), in the pane and in the band. A command it triggers may use the network. Digit hotkeys in the band exist only when you turn on the `bandDigits` option, and only for the plugin's own commands.
+A button runs a slash command through Claude Code (`$.command.run`), only when you press it or a band favourite, with the command and arguments shown beside it. That includes Claude Code's built-in commands and commands of other plugins, not only the plugin's own. Such a button is tagged (`runs <plugin>`, `runs a built-in`) and needs a second press within 5 seconds (`press again: /command`), in the pane and in the band. A command it triggers may use the network. Band favourites have no keyboard shortcut; they run only on a click.
 
 ### What it reads
 
