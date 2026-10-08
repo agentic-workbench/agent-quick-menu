@@ -1556,14 +1556,18 @@ async function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, nex
   )
 }
 
-/** The menu toggle at the bottom right of the prompt footer: the modes as the engine draws them, then the button. */
+/**
+ * The menu toggle at the bottom right of the prompt footer: what the hooks beneath draw (the engine's modes, other
+ * plugins' buttons), then the button. Kept, never replaced, so another plugin's footer button stays.
+ */
 async function renderFooter($: EngineInterface, e: RenderInput<'SessionMode'>, next: () => unknown): Promise<RenderElement> {
   if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
-  const { Box, Button, Text } = $.ui.resolve(e)
+  const { Box, Button } = $.ui.resolve(e)
+  const below = (await next()) as RenderNode | null | undefined
   const label = menuLabelFor(await isPaneOpen($))
   return (
     <Box columnGap={1}>
-      {e.props.modes.length > 0 && <Text dimColor>{`${e.props.modes.join(' & ')} &`}</Text>}
+      {below}
       <Button key="footer:menu" label={label} plain dimColor onPress={() => void togglePane($)} />
     </Box>
   )
