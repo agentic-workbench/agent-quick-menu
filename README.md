@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>One menu for Claude Code:</b> every plugin's commands and settings, and Claude Code's own,<br>
-  in a pane beside the transcript and a band above the prompt.
+  in a pane beside the transcript, a band of favourites above the prompt and a menu button below it.
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 - **Every plugin in one place.** Each plugin gets a foldable section with its commands as buttons and its settings as editable rows; Claude Code's own `/config` settings get one too.
 - **Commands that ask.** A button can prompt for its argument (a branch, a date) before it runs, with save and cancel.
 - **Settings you can change in place.** Toggles, option buttons and text fields, each with its description; a filter finds a row by name or description.
-- **Favourites in the band.** Pin any command or setting with ☆ and it sits above the prompt, one press away.
+- **Favourites in the band.** Pin any command or setting with ☆ and it sits above the prompt, one press away. The menu button sits at the bottom right of the prompt footer.
 - **Safe by default.** Every button shows the slash command it runs; another plugin's or a built-in command needs a second press. Menu files are treated as untrusted input.
 - **One file to join.** A plugin registers with a small `.claude-plugin/quick-menu.json`; no code, no dependency.
 
@@ -64,9 +64,9 @@ Then run `/reload-plugins` in a running session.
 ## Usage
 
 - `/menu` opens the pane. `/menu refresh` discovers plugin menus again.
-- The band above the prompt is one line: `≣ menu ▸ │ Pull  Status …` (hotkey `m` while the band is focused, then your favourites). The button toggles: it closes the menu when it is open (`▾`) and opens it when closed (`▸`); `/menu` always opens or focuses it. With `bandDigits` on, own-plugin commands read `1 Pull  3 Status`, the digit being the place in the pinned list.
+- The menu button `≣ menu ▸` sits at the bottom right of the prompt footer, after the dim mode labels. Click it to toggle: it closes the menu when it is open (`▾`) and opens it when closed (`▸`); it has no hotkey, as the footer cannot hold focus. `/menu` always opens or focuses it. The band above the prompt is one line holding your favourites only, after a dim caption: `★ favourites: Pull  Status …`.
 - `ctrl+x tab` focuses the band.
-- Band digits are opt-in: with the `bandDigits` setting on (default off) and an empty prompt, `1` to `9` press the pinned commands of this plugin only, numbered by their position in the pinned list (a gap keeps the other numbers). Other plugins' commands and setting favourites carry no digit. Digits do not arm while the band scrolls, and another mod's same hotkey may win.
+- Pinned favourites are buttons in the band above the prompt; one click runs them. There is no keyboard shortcut for them.
 - `☆` / `★` on any row adds or removes a favourite. Favourites are listed first in the pane.
 - Every section folds: press its header (`▸` / `▾`). Favourites start open, every other section folded. `Expand all` (`e`) and `Collapse all` (`c`) sit on the top line; the state is kept across sessions. The pane closes with Claude Code's own `×`, Escape or ctrl+x x. With no favourites yet, the pane says to press `☆` on a row.
 - The filter field at the top (`filter…`) matches setting labels, keys and descriptions and command names and labels, case-insensitive, across every section. Sections without a match are hidden, matching ones open while a filter is set, and the counts follow.
@@ -94,11 +94,12 @@ Then run `/reload-plugins` in a running session.
 
 **Its hooks.**
 
-- `ui.render` on `AbovePrompt`: adds its own row and keeps every other mod's band beneath it.
+- `ui.render` on `AbovePrompt`: adds its own row of favourites and keeps every other mod's band beneath it.
+- `ui.render` on `SessionMode`: draws the footer's mode labels as the engine does, then the menu button.
 - `ui.render` on its `Pane`: draws the menu.
 - `command.run`, matched to `/menu` only: answers `/menu` and `/menu refresh` itself. It never sees, changes or blocks any other command, including the ones it runs for you.
 - `plugin.register`: reads the name, root and provenance of each plugin as it loads, to find the `quick-menu.json` of plugins loaded with `--plugin-dir`. It passes every registration on unchanged and never alters or blocks a plugin, its settings, instructions, hooks or tool descriptions.
-- `ui.close`: observed only, to redraw the band's menu button when the pane closes. It passes every close on unchanged.
+- `ui.close`: observed only, to redraw the footer's menu button when the pane closes. It passes every close on unchanged.
 - `session.start`: registers `/menu`, loads favourites and folds, and starts discovery.
 
 ## For plugin authors
@@ -121,7 +122,7 @@ That's it: `commands` become buttons, `ask` prompts for an argument first, and `
 
 ## Limitations
 
-- There is no global hotkey; the band hotkeys work only while the band is focused or the prompt is empty.
+- There is no global hotkey and no keyboard shortcut for the band favourites.
 - A `--plugin-dir` plugin's root is only learned when its hooks module loads after this one (`plugin.register`; kept across a reload of the menu); a plugin without one, or loaded earlier, is listed from `$.command.list()` with its commands only. Set `CLAUDE_CODE_PLUGIN_DIRS` to the same folder to read its `quick-menu.json`. A `--plugin-dir` copy shadows an installed copy of the same plugin. The menu reads its own file from its own folder.
 - Discovery runs in the background, after every plugin's `session.start` and on `/menu refresh` (which toasts the counts when it is done), so `/menu` answers at once.
 - Settings that are not shown in `/config` are not shown here.

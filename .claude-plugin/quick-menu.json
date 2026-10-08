@@ -7,8 +7,5 @@
       "args": "refresh",
       "description": "Discover plugin menus again"
     }
-  ],
-  "settings": [
-    "bandDigits"
   ]
 }

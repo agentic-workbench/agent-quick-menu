@@ -32,8 +32,6 @@ const inlineRootState = atom({ plugin: 'agent-quick-menu', key: 'inlineRoots' } 
 let sessionCwd = ''
 let sessionStarted = false
 let discoveryRun = 0
-/** The `bandDigits` option: digit hotkeys on the band's own-plugin commands; off unless the person turns it on. */
-let bandDigits = false
 /**
  * Roots of `--plugin-dir` plugins, learned from `plugin.register` (the only place the types hand out another plugin's `root`).
  * `plugin.register` fires once per load of the other plugin, never again when this module reloads, so the roots are kept in
@@ -48,10 +46,9 @@ const BUTTON_GAP = 2
 const STAR_CELLS = 2
 const SEP_CELLS = 3
 const MIN_HELP_CELLS = 8
-/** The band: the menu button's chrome (`[ `, ` ▾`, ` ]` and the gap), a digit hotkey's `1 `, and the divider plus the engine's `[-]`. */
-const MENU_BUTTON_CHROME = 5
-const DIGIT_CELLS = 3
+/** The band: the room the engine keeps for its `[-]`, and the dim caption before the favourites. */
 const BAND_RESERVE = 6
+const BAND_CAPTION = '★ favourites:'
 const MAX_RUNS_HINT = 60
 const MAX_TOAST = 200
 const MAX_PROBLEM_PLUGIN = 100
@@ -1415,7 +1412,7 @@ async function renderMenu($: EngineInterface, e: RenderInput<'Pane'>) {
   )
 }
 
-/** The band's menu button label with the pane's state: ▾ open, ▸ closed. ≣: one cell in every width table. */
+/** The footer menu button's label with the pane's state: ▾ open, ▸ closed. ≣: one cell in every width table. */
 const menuLabelFor = (isOpen: boolean): string => `≣ menu ${isOpen ? '▾' : '▸'}`
 
 /** What a band button does when pressed; plain data, so no closure over `$` is stored. */
@@ -1424,7 +1421,7 @@ type BandAction =
   | { kind: 'toggle'; row: ConfigRow }
   | { kind: 'open' }
 
-type BandItem = { label: string; action: BandAction; isOwn: boolean; digit?: number }
+type BandItem = { label: string; action: BandAction }
 
 async function pressBandItem($: EngineInterface, action: BandAction): Promise<void> {
   switch (action.kind) {
@@ -1449,15 +1446,14 @@ function bandItem(
     return {
       label: commandLabel(f.plugin, c, state),
       action: { kind: 'run', plugin: f.plugin, c },
-      isOwn: runsTag(f.plugin, c) === null,
     }
   }
   const r = rows.find(x => x.key === f.key)
   if (!r) return null
   if (r.kind === 'boolean' && !r.isLocked) {
-    return { label: `${r.label}: ${r.value ? 'on' : 'off'}`, action: { kind: 'toggle', row: r }, isOwn: false }
+    return { label: `${r.label}: ${r.value ? 'on' : 'off'}`, action: { kind: 'toggle', row: r } }
   }
-  return { label: r.label, action: { kind: 'open' }, isOwn: false }
+  return { label: r.label, action: { kind: 'open' } }
 }
 
 /** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
@@ -1524,31 +1520,27 @@ async function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, nex
   const ui = $.ui.resolve(e)
   const { Box, Button, Text } = ui
   const d = await loadMenu($)
-  const menuLabel = menuLabelFor(await isPaneOpen($))
-  let used = width(menuLabel) + MENU_BUTTON_CHROME + BAND_RESERVE
+  let used = BAND_RESERVE + width(BAND_CAPTION) + 1
   const items: BandItem[] = []
-  for (const [position, f] of d.favs.entries()) {
+  for (const f of d.favs) {
     const item = bandItem(f, d.all, d.rows, d.state)
     if (!item) continue
-    // The digit is the favourite's own place in the pinned list, so a gap never renumbers the others.
-    const digit = bandDigits && item.isOwn && position < 9 ? position + 1 : undefined
-    used += width(item.label) + (digit === undefined ? 0 : DIGIT_CELLS) + BUTTON_GAP
+    used += width(item.label) + BUTTON_GAP
     if (used > e.props.bodyColumns) break
-    items.push(digit === undefined ? item : { ...item, digit })
+    items.push(item)
   }
   const menu = (await isUnplaced($)) ? renderBandMenu($, ui, d, e.props.maxRows - 2, e.props.bodyColumns) : null
+  if (items.length === 0 && !menu) return next() as Promise<RenderElement>
   const below = (await next()) as RenderNode | null | undefined
   return (
     <Box flexDirection="column">
       <Box columnGap={1}>
-        <Button key="band:menu" label={menuLabel} hotkey="m" onPress={() => void togglePane($)} />
-        {items.length > 0 && <Text dimColor>│</Text>}
+        {items.length > 0 && <Text dimColor>{BAND_CAPTION}</Text>}
         {items.map((item, i) => (
           <Button
             key={`band:${i + 1}`}
             label={item.label}
             plain
-            {...(item.digit !== undefined && { hotkey: String(item.digit) })}
             onPress={() => void pressBandItem($, item.action)}
           />
         ))}
@@ -1564,8 +1556,20 @@ async function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, nex
   )
 }
 
-export const register: Register = (on, options) => {
-  bandDigits = options.bandDigits === true
+/** The menu toggle at the bottom right of the prompt footer: the modes as the engine draws them, then the button. */
+async function renderFooter($: EngineInterface, e: RenderInput<'SessionMode'>, next: () => unknown): Promise<RenderElement> {
+  if (e.surface !== 'terminal' && e.surface !== 'desktop') return next() as Promise<RenderElement>
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const label = menuLabelFor(await isPaneOpen($))
+  return (
+    <Box columnGap={1}>
+      {e.props.modes.length > 0 && <Text dimColor>{`${e.props.modes.join(' & ')} &`}</Text>}
+      <Button key="footer:menu" label={label} plain dimColor onPress={() => void togglePane($)} />
+    </Box>
+  )
+}
+
+export const register: Register = on => {
   on('plugin.register', async ($, e, next) => {
     if (e.provenance.endsWith('@inline')) {
       inlineRoots.set(e.name, e.root)
@@ -1610,6 +1614,8 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, ($, e) => renderMenu($, e))
+
+  on('ui.render', { component: 'SessionMode' }, ($, e, next) => renderFooter($, e, () => next(e)))
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, () => next(e)))
 }
