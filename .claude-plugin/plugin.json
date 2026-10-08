@@ -1,6 +1,6 @@
 {
   "name": "agent-quick-menu",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A pane and prompt band for plugin commands declared in quick-menu.json, plus plugin and Claude Code settings exposed through /config.",
   "author": {
     "name": "dasganni",
@@ -10,14 +10,6 @@
   "repository": "https://github.com/agentic-workbench/agent-quick-menu",
   "license": "MIT",
   "types": "./types/index.d.ts",
-  "userConfig": {
-    "bandDigits": {
-      "type": "boolean",
-      "title": "Band digits",
-      "description": "Bind the digits 1-9 to the pinned commands of this menu's own plugins in the band above the prompt, by their place in the pinned list.",
-      "default": false
-    }
-  },
   "keywords": [
     "menu",
     "commands",

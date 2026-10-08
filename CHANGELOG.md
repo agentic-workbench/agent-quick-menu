@@ -2,6 +2,12 @@
 
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [semantic versioning](https://semver.org). Releases are cut automatically when `develop` is merged into `main`: `scripts/release.mjs` derives the version and the section from the Conventional Commit subjects since the last tag, bumps `version` in `.claude-plugin/plugin.json`, and the merge is tagged `v<version>`.
 
+## [0.3.0] - 2026-10-08
+
+### Added
+
+- The menu button moves to the prompt footer and band favourites lose their hotkeys (#15)
+
 ## [0.2.0] - 2026-10-07
 
 ### Fixed
@@ -176,6 +182,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - `SECURITY.md`, `CONTRIBUTING.md`, a Code of Conduct, issue and pull request templates, CI that checks the JSON files, and Dependabot.
 - `keywords` in `plugin.json` and `description`, `category` and `author` on the marketplace entry.
 
+[0.3.0]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.19...v0.2.0
 [0.1.19]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/agentic-workbench/agent-quick-menu/compare/v0.1.17...v0.1.18

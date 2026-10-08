@@ -191,6 +191,10 @@ async function mountBand($: any, props: unknown = BAND_PROPS, surface = 'termina
   return $.ui.mount({ plugin: 'agent-quick-menu', surface, component: 'AbovePrompt', props })
 }
 
+async function mountFooter($: any, props: unknown = { modes: [] }, surface = 'terminal') {
+  return $.ui.mount({ plugin: 'agent-quick-menu', surface, component: 'SessionMode', props })
+}
+
 const FAV_WORLD = (extra: Partial<World> = {}): World => ({
   ...ALPHA,
   files: alphaFile({ version: 1, commands: [{ command: 'go', label: 'Go', args: '--all' }, { command: 'stop' }] }),
@@ -1297,7 +1301,7 @@ describe('band', () => {
     { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
   ]
 
-  test('shows the menu button and favourites in order with digit hotkeys when bandDigits is on', { options: { bandDigits: true } }, async ($, on) => {
+  test('shows the favourites in order without hotkeys', async ($, on) => {
     const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
@@ -1305,8 +1309,7 @@ describe('band', () => {
     const ui = await mountBand($)
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
-      ['≣ menu ▸', 'm'],
-      ['Go', '1'],
+      ['Go', undefined],
       ['flag: off', undefined],
     ])
   })
@@ -1333,7 +1336,7 @@ describe('band', () => {
     expect(sets).toMatchObject([{ key: 'alpha.flag', value: 'true' }])
   })
 
-  test('band width counts code points and keeps 4 cells for [-]', { options: { bandDigits: true } }, async ($, on) => {
+  test('band width counts code points and keeps room for [-]', async ($, on) => {
     const fav = [
       { kind: 'command', plugin: 'alpha', key: 'go --all' },
       { kind: 'command', plugin: 'alpha', key: 'stop' },
@@ -1342,41 +1345,29 @@ describe('band', () => {
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
     await start($)
-    // menu: 8 + 5 = 13, divider 2, reserve 4 -> 19; Go: 2 + 3 (digit) + 2 = 7 -> 26; stop: 4 + 3 + 2 = 9 -> 35.
+    // reserve 6 + caption `★ favourites:` 13 + 1 = 20; Go: 2 + 2 = 4 -> 24; stop: 4 + 2 = 6 -> 30.
     const labels = async (columns: number) =>
       (await (await mountBand($, { ...(BAND_PROPS as object), bodyColumns: columns })).findAll({ type: 'Button' })).map(
         (b: any) => b.props.label,
       )
-    expect(await labels(35)).toEqual(['≣ menu ▸', 'Go', 'stop'])
-    expect(await labels(34)).toEqual(['≣ menu ▸', 'Go'])
-    expect(await labels(25)).toEqual(['≣ menu ▸'])
+    expect(await labels(30)).toEqual(['Go', 'stop'])
+    expect(await labels(29)).toEqual(['Go'])
+    expect(await labels(23)).toEqual([])
   })
 
-  test('digit hotkeys sit on own-plugin commands, at the favourite\'s fixed position', { options: { bandDigits: true } }, async ($, on) => {
-    const store = new Map<string, unknown>([['favourites', [
-      { kind: 'setting', plugin: 'alpha', key: 'alpha.flag' },
-      { kind: 'command', plugin: 'alpha', key: 'stop' },
-    ]]])
+  test('no band favourite Button has a hotkey', async ($, on) => {
+    const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store }))
     emptyBase(on)
     await start($)
     const ui = await mountBand($)
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['m', undefined, '2'])
-  })
-
-  test('the menu button opens the pane', async ($, on) => {
-    const opened: unknown[] = []
-    stub(on, FAV_WORLD({ open: e => opened.push(e) }))
-    emptyBase(on)
-    await start($)
-    const ui = await mountBand($)
-    await ui.press({ key: 'band:menu' })
-    expect(opened).toMatchObject([{ id: 'quick-menu', focus: true }])
+    expect(buttons.length).toBeGreaterThan(0)
+    for (const b of buttons) expect((b as any).props.hotkey).toBeUndefined()
   })
 
   test("the band keeps next(e)'s tree", async ($, on) => {
-    stub(on, FAV_WORLD())
+    stub(on, FAV_WORLD({ store: new Map<string, unknown>([['favourites', pin()]]) }))
     on('ui.render', ($: any, e: any) => {
       const { Text } = $.ui.resolve(e)
       return <Text>cache 4:00</Text>
@@ -1384,18 +1375,20 @@ describe('band', () => {
     await start($)
     const ui = await mountBand($)
     expect(await ui.find({ text: /cache 4:00/ })).toBeDefined()
-    expect(await ui.find({ key: 'band:menu' })).toBeDefined()
+    expect(await ui.find({ key: 'band:1' })).toBeDefined()
+    expect(await ui.find({ key: 'band:menu' })).toBeUndefined()
   })
 
-  test('with no favourites the band row holds the menu button alone, its label one cell per character', async ($, on) => {
+  test('with no favourites the band draws next(e)\'s tree only', async ($, on) => {
     stub(on, FAV_WORLD())
-    emptyBase(on)
+    on('ui.render', ($: any, e: any) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>cache 4:00</Text>
+    })
     await start($)
     const ui = await mountBand($)
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)).toEqual(['≣ menu ▸'])
-    expect(await textsOf(ui)).toEqual([])
-    // No East Asian Wide glyph (☰ U+2630 is one): the engine and a terminal on older Unicode tables disagree on its width.
-    expect([...'≣ menu ▸▾'].every(ch => !/[\u1100-\u115f\u2630-\u2637\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60]/.test(ch))).toBe(true)
+    expect(await textsOf(ui)).toEqual(['cache 4:00'])
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
   })
 
   test('a favourite naming /menu refresh is answered by the menu itself, not queued through $.command.run', async ($, on) => {
@@ -1530,13 +1523,57 @@ describe('folding', () => {
     stub(on, FOLD({ open: e => opened.push(e) }))
     emptyBase(on)
     await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(opened).toMatchObject([{ id: 'quick-menu', closeOnEscape: true }])
   })
 })
 
-describe('band menu toggle', () => {
-  const menuLabel = async ($: any) => (await (await mountBand($)).find({ key: 'band:menu' })).props.label
+describe('footer menu button', () => {
+  const menuLabel = async ($: any) => (await (await mountFooter($)).find({ key: 'footer:menu' })).props.label
+
+  test('the button opens the pane', async ($, on) => {
+    const opened: unknown[] = []
+    stub(on, FAV_WORLD({ open: e => opened.push(e) }))
+    emptyBase(on)
+    await start($)
+    const ui = await mountFooter($)
+    const button = await ui.find({ key: 'footer:menu' })
+    expect(button.props.hotkey).toBeUndefined()
+    await ui.press({ key: 'footer:menu' })
+    expect(opened).toMatchObject([{ id: 'quick-menu', focus: true }])
+  })
+
+  test('the label is one cell per character', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    // No East Asian Wide glyph (☰ U+2630 is one): the engine and a terminal on older Unicode tables disagree on its width.
+    expect([...'≣ menu ▸▾'].every(ch => !/[\u1100-\u115f\u2630-\u2637\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\uff00-\uff60]/.test(ch))).toBe(true)
+    expect(await menuLabel($)).toBe('≣ menu ▸')
+  })
+
+  test('the modes stay as dim text before the button', async ($, on) => {
+    stub(on, FAV_WORLD())
+    emptyBase(on)
+    await start($)
+    const ui = await mountFooter($, { modes: ['focus', 'memory paused'] })
+    expect(await textsOf(ui)).toEqual(['focus & memory paused &'])
+    expect(await ui.find({ key: 'footer:menu' })).toBeDefined()
+    expect(await textsOf(await mountFooter($))).toEqual([])
+  })
+
+  test('other surfaces get next(e) only', async ($, on) => {
+    stub(on, FAV_WORLD())
+    on('ui.render', ($: any, e: any) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>modes</Text>
+    })
+    await start($)
+    const ui = await mountFooter($, { modes: [] }, 'vscode')
+    expect(await ui.find({ text: /modes/ })).toBeDefined()
+    expect(await ui.find({ key: 'footer:menu' })).toBeUndefined()
+  })
+
 
   test('the button opens the pane when closed and closes it when open', async ($, on) => {
     const opened: unknown[] = []
@@ -1546,13 +1583,13 @@ describe('band menu toggle', () => {
     on('ui.close', (_$: any, e: any) => (closed.push(e), (up = false), { value: undefined }))
     emptyBase(on)
     await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(opened).toHaveLength(1)
     expect(closed).toHaveLength(0)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(opened).toHaveLength(1)
     expect(closed).toMatchObject([{ id: 'quick-menu' }])
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(opened).toHaveLength(2)
   })
 
@@ -1562,7 +1599,7 @@ describe('band menu toggle', () => {
     emptyBase(on)
     await start($)
     expect(await menuLabel($)).toBe('≣ menu ▸')
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(await menuLabel($)).toBe('≣ menu ▾')
     // Closed by × or Esc: the engine's record no longer lists the pane.
     up = false
@@ -1587,7 +1624,7 @@ describe('narrow terminal', () => {
     await start($)
     const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
     expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
-    await ui.press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     expect(toasts.join()).toMatch(/terminal too narrow/)
     const fresh = await mountBand($, { ...(BAND_PROPS as object), maxRows: 8 })
     expect((await fresh.find({ key: 'fold:plugin:alpha' })).props.label).toBe('▸ alpha')
@@ -1599,7 +1636,7 @@ describe('narrow terminal', () => {
     stub(on, NARROW({ rows: [row('b.x'), row('c.x'), row('d.x'), row('e.x')] }))
     emptyBase(on)
     await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 3 })
     const heads = (await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.key).startsWith('fold:'))
     expect(heads).toHaveLength(1)
@@ -1611,7 +1648,7 @@ describe('narrow terminal', () => {
     stub(on, FAV_WORLD())
     emptyBase(on)
     await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     const ui = await mountBand($)
     expect(await ui.find({ key: 'fold:plugin:alpha' })).toBeUndefined()
   })
@@ -1622,7 +1659,7 @@ describe('narrow terminal', () => {
     stub(on, { ...FAV_WORLD(), placed: false })
     emptyBase(on)
     await start($)
-    await (await mountBand($)).press({ key: 'band:menu' })
+    await (await mountFooter($)).press({ key: 'footer:menu' })
     const ui = await mountBand($, { ...(BAND_PROPS as object), maxRows: 6 })
     await ui.press({ key: 'band:close' })
     expect(closed).toMatchObject([{ id: 'quick-menu' }])
@@ -1995,41 +2032,6 @@ describe('security: menu file input', () => {
     await start($)
     const ui = await mountPane($)
     expect(await titleOf(ui, /^Fancy · alpha$/)).toBeDefined()
-  })
-})
-
-describe('security: digit hotkeys', () => {
-  const favs = [
-    { kind: 'command', plugin: 'alpha', key: 'gone' },
-    { kind: 'command', plugin: 'alpha', key: 'clear' },
-    { kind: 'command', plugin: 'alpha', key: 'go --all' },
-  ]
-  const world = (): World => ({
-    ...ALPHA,
-    files: alphaFile({ version: 1, commands: [{ command: 'go', args: '--all' }, { command: 'clear' }] }),
-    commands: ['go'],
-    builtins: ['clear'],
-    store: new Map<string, unknown>([['favourites', favs]]),
-  })
-
-  test('off by default', async ($, on) => {
-    stub(on, world())
-    emptyBase(on)
-    await start($)
-    const ui = await mountBand($)
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.props.hotkey)).toEqual(['m', undefined, undefined])
-  })
-
-  test('on: the digit is the pinned position, gaps and foreign commands included', { options: { bandDigits: true } }, async ($, on) => {
-    stub(on, world())
-    emptyBase(on)
-    await start($)
-    const ui = await mountBand($)
-    expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.props.label, b.props.hotkey])).toEqual([
-      ['≣ menu ▸', 'm'],
-      ['clear', undefined],
-      ['go', '3'],
-    ])
   })
 })
 
