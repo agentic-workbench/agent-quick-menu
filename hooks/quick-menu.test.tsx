@@ -1552,14 +1552,23 @@ describe('footer menu button', () => {
     expect(await menuLabel($)).toBe('≣ menu ▸')
   })
 
-  test('the modes stay as dim text before the button', async ($, on) => {
+  test('what the hooks beneath draw stays before the button', async ($, on) => {
     stub(on, FAV_WORLD())
-    emptyBase(on)
+    // Another plugin's footer: the modes and its own button, as feed-the-beast draws them.
+    on('ui.render', ($: any, e: any) => {
+      const { Box, Button, Text } = $.ui.resolve(e)
+      return (
+        <Box>
+          <Text dimColor>{e.props.modes.join(' & ')}</Text>
+          <Button key="other:icon" label="🦁" plain onPress={() => {}} />
+        </Box>
+      )
+    })
     await start($)
     const ui = await mountFooter($, { modes: ['focus', 'memory paused'] })
-    expect(await textsOf(ui)).toEqual(['focus & memory paused &'])
+    expect(await ui.find({ text: /focus & memory paused/ })).toBeDefined()
+    expect(await ui.find({ key: 'other:icon' })).toBeDefined()
     expect(await ui.find({ key: 'footer:menu' })).toBeDefined()
-    expect(await textsOf(await mountFooter($))).toEqual([])
   })
 
   test('other surfaces get next(e) only', async ($, on) => {
