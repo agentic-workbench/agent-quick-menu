@@ -46,6 +46,8 @@ const BUTTON_GAP = 2
 const STAR_CELLS = 2
 const SEP_CELLS = 3
 const MIN_HELP_CELLS = 8
+/** The indent of a section's rows under its title. */
+const BODY_INDENT = 2
 /** The band: the room the engine keeps for its `[-]`, and the dim caption before the favourites. */
 const BAND_RESERVE = 6
 const BAND_CAPTION = '★ favourites:'
@@ -1320,7 +1322,8 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, { hasFie
     ? b.favs.flatMap(f => (f.kind === 'command' ? [findFavCommand(f, d.all)?.label ?? ''] : []))
     : b.commands.slice(0, MAX_SHOWN_COMMANDS).map(c => c.label)
   const cmdPad = Math.max(0, ...cmdLabels.map(l => width(l)))
-  const ctx: RowCtx = { list: d.favs, prefix: prefixOf(b), hasFields, pad: widest, cmdPad, open: d.openEditor, draft: d.draft, columns }
+  // Rows sit in the body's indent, so their descriptions get the columns less that indent.
+  const ctx: RowCtx = { list: d.favs, prefix: prefixOf(b), hasFields, pad: widest, cmdPad, open: d.openEditor, draft: d.draft, columns: columns - BODY_INDENT }
   let body: RenderNode[] = []
   if (showBody && isOpen && b.favs) {
     body = b.favs.map(f => renderFavourite($, ui, f, d.all, d.rows, d.state, ctx))
@@ -1353,7 +1356,7 @@ function renderBlock($: EngineInterface, ui: Ui, b: Block, d: MenuData, { hasFie
         <Text dimColor>{summaryOf(b)}</Text>
       </Box>
       {body.length > 0 && (
-        <Box key={`body:${b.id}`} flexDirection="column" paddingLeft={2}>
+        <Box key={`body:${b.id}`} flexDirection="column" paddingLeft={BODY_INDENT}>
           {body}
         </Box>
       )}

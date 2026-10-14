@@ -1754,6 +1754,31 @@ describe('security: what a button runs', () => {
     expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
 
+  /** Cells a drawn row takes: its texts, a plain Button's label, a Button's label in its `[ ` ` ]`. */
+  const cellsOf = (node: any): number => {
+    if (typeof node === 'string') return [...node].length
+    if (node.type === 'Button') return [...String(node.props.label)].length + (node.props.plain ? 0 : 4)
+    return (node.children ?? []).reduce((n: number, c: unknown) => n + cellsOf(c), 0)
+  }
+  const rowsOf = async (ui: any) => (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('row:'))
+
+  test('a row with a clipped description fits the pane beside the section indent', async ($, on) => {
+    stub(on, {
+      ...describedWorld(),
+      rows: [
+        row('alpha.mode', { kind: 'choice', value: 'fast', options: ['fast', 'slow'], description: 'Picks the speed of the whole run '.repeat(4) }),
+        row('alpha.name', { value: 'x', description: 'Names the run for the log '.repeat(6) }),
+      ],
+    })
+    await start($)
+    const ui = await mountPane($, { columns: 70 })
+    const rows = await rowsOf(ui)
+    for (const r of rows) expect(2 + cellsOf(r)).toBeLessThanOrEqual(70)
+    const clipped = rows.filter((r: any) => r.text.endsWith('…'))
+    expect(clipped).toHaveLength(3)
+    for (const r of clipped) expect(2 + cellsOf(r)).toBeGreaterThanOrEqual(66)
+  })
+
   test('a setting description is dropped when under 8 cells remain', async ($, on) => {
     stub(on, settingWorld())
     await start($)
