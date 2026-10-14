@@ -822,6 +822,16 @@ describe('settings', () => {
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
   })
 
+  test('a choice option /config refuses shows the reason and keeps the value', async ($, on) => {
+    stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set: () => ({ deny: 'policy says no' }) }))
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: 'set:alpha.mode' })
+    await ui.press({ key: 'set:alpha.mode:b' })
+    expect(await ui.find({ text: /policy says no/ })).toBeDefined()
+    expect((await ui.find({ key: 'set:alpha.mode' })).props.label).toBe('a ▾')
+  })
+
   test('writing the value a row already holds is no refusal and shows no note', async ($, on) => {
     stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set: () => ({ deny: 'alpha.name is not changed' }) }))
     await start($)
@@ -1583,7 +1593,6 @@ describe('footer menu button', () => {
     expect(await ui.find({ key: 'footer:menu' })).toBeUndefined()
   })
 
-
   test('the button opens the pane when closed and closes it when open', async ($, on) => {
     const opened: unknown[] = []
     const closed: unknown[] = []
@@ -1728,6 +1737,28 @@ describe('security: what a button runs', () => {
     expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
 
+  /** Cells a drawn row takes: its texts, a plain Button's label, a Button's label in its `[ ` ` ]`. */
+  const cellsOf = (node: any): number => {
+    if (typeof node === 'string') return [...node].length
+    if (node.type === 'Button') return [...String(node.props.label)].length + (node.props.plain ? 0 : 4)
+    return (node.children ?? []).reduce((n: number, c: unknown) => n + cellsOf(c), 0)
+  }
+  const rowsOf = async (ui: any) => (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('row:'))
+
+  test('a long command hint is clipped to the pane rather than wrapping the row', async ($, on) => {
+    stub(on, {
+      ...FOREIGN,
+      commands: ['import-from-the-issue-tracker'],
+      files: alphaFile({ version: 1, commands: [{ command: 'import-from-the-issue-tracker', label: 'Import', ask: { placeholder: 'key' } }] }),
+    })
+    await start($)
+    const ui = await mountPane($, { columns: 30 })
+    const row = (await rowsOf(ui)).find((r: any) => r.text.includes('Import'))
+    expect(row).toBeDefined()
+    expect(2 + cellsOf(row)).toBeLessThanOrEqual(30)
+    expect(row.text).toContain('/import-from')
+  })
+
   test('a command description is dropped when the width is short', async ($, on) => {
     stub(on, describedWorld())
     await start($)
@@ -1753,14 +1784,6 @@ describe('security: what a button runs', () => {
     const texts = await textsOf(ui)
     expect(texts[texts.indexOf(wide) - 1]).toBe(' · ')
   })
-
-  /** Cells a drawn row takes: its texts, a plain Button's label, a Button's label in its `[ ` ` ]`. */
-  const cellsOf = (node: any): number => {
-    if (typeof node === 'string') return [...node].length
-    if (node.type === 'Button') return [...String(node.props.label)].length + (node.props.plain ? 0 : 4)
-    return (node.children ?? []).reduce((n: number, c: unknown) => n + cellsOf(c), 0)
-  }
-  const rowsOf = async (ui: any) => (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('row:'))
 
   test('a row with a clipped description fits the pane beside the section indent', async ($, on) => {
     stub(on, {
