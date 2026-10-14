@@ -1101,11 +1101,14 @@ function renderCommand(
   const rid = commandKey(plugin, c)
   const id = ctx.prefix + rid
   const tag = runsTag(plugin, c)
-  const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}${c.ask ? ' …' : ''}`, MAX_RUNS_HINT)
+  const tagCells = tag === null ? 0 : 1 + width(tag)
+  // The hint takes what is left after star, button and tag, so a narrow pane clips it rather than wrapping the row.
+  const before = STAR_CELLS + Math.max(ctx.cmdPad, width(c.label)) + BUTTON_CHROME + BUTTON_GAP
+  const runs = clip(`/${c.command}${c.args ? ` ${c.args}` : ''}${c.ask ? ' …' : ''}`, Math.max(1, Math.min(MAX_RUNS_HINT, ctx.columns - before - tagCells)))
   const Input = inputOf(ui)
   if (c.ask && c.isAvailable && Input && ctx.open === id) return renderAsk($, ui, { plugin, c, id, rid, runs, tag, state }, Input, ctx)
   // The help text takes what is left of the line after star, button, hint and tag.
-  const used = STAR_CELLS + Math.max(ctx.cmdPad, width(c.label)) + BUTTON_CHROME + BUTTON_GAP + width(runs) + (tag === null ? 0 : 1 + width(tag)) + 1
+  const used = before + width(runs) + tagCells + 1
   const help = helpFor(c.isAvailable ? c.description : undefined, ctx.columns - used - SEP_CELLS)
   return (
     <Box key={`row:${id}`} flexDirection="row">
