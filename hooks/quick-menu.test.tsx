@@ -24,9 +24,9 @@ type World = {
   pluginCommands?: { name: string; plugin: string; description?: string }[]
   rows?: Record<string, unknown>[]
   run?: (e: { command: string; args?: string }) => unknown
-  set?: (e: { key: string; value: string }) => { value?: string; deny?: string }
-  /** `/config` answers `{}`, as an interactive session's `$.command.run` does: its text goes to the transcript only. */
-  silentConfig?: boolean
+  set?: (e: { key: string; value: unknown }) => { value?: unknown; deny?: string }
+  /** `$.config.set` writes, but `$.config.list()` keeps the old value, as an engine row (the editor mode) does until it redraws. */
+  lagging?: boolean
   open?: (e: unknown) => void
   placed?: false
   store?: Map<string, unknown>
@@ -100,25 +100,16 @@ function stub(on: any, w: World) {
     ] }
   })
   on('config.list', () => ({ value: w.rows ?? [] }))
+  // `$.config.set`: a write lands in the row, as `$.config.list()` reads it afterwards; a refusal leaves it.
+  on('config.set', (_$: unknown, e: { key: string; value: unknown }) => {
+    const out = w.set ? w.set({ key: e.key, value: e.value }) : { value: e.value }
+    if (out.deny !== undefined) return { deny: out.deny }
+    const written = out.value ?? e.value
+    if (w.rows && !w.lagging) w.rows = w.rows.map(r => (r.key !== e.key ? r : { ...r, value: written }))
+    return { value: written }
+  })
   on('command.run', (_$: unknown, e: { command: string; args?: string }) => {
     if (e.command === 'menu') return undefined
-    // `/config key=value`: the value arrives as bare text; a refusal is answered as text, a write as "Set <key> to <value>".
-    if (e.command === 'config') {
-      const at = (e.args ?? '').indexOf('=')
-      const set = { key: (e.args ?? '').slice(0, at), value: (e.args ?? '').slice(at + 1) }
-      const out = w.set ? w.set(set) : { value: set.value }
-      // A write lands in the row, as `$.config.list()` reads it afterwards, in the row's kind.
-      if (out.deny === undefined && w.rows) {
-        const written = out.value ?? set.value
-        w.rows = w.rows.map(r =>
-          r.key !== set.key
-            ? r
-            : { ...r, value: r.kind === 'boolean' ? written === 'true' : r.kind === 'number' ? Number(written) : written },
-        )
-      }
-      if (w.silentConfig) return {}
-      return { text: out.deny !== undefined ? out.deny : `Set ${set.key} to ${set.value}` }
-    }
     return w.run ? w.run(e) : { text: 'ok' }
   })
 }
@@ -158,10 +149,10 @@ const realButtons = async (ui: any) =>
 
 const file = (o: unknown) => JSON.stringify(o)
 
-/** A `set` for the stub that records each `/config key=value` write and accepts it. */
+/** A `set` for the stub that records each `$.config.set` write and accepts it. */
 const recordSets = () => {
-  const sets: { key: string; value: string }[] = []
-  return { sets, set: (e: { key: string; value: string }) => (sets.push(e), { value: e.value }) }
+  const sets: { key: string; value: unknown }[] = []
+  return { sets, set: (e: { key: string; value: unknown }) => (sets.push(e), { value: e.value }) }
 }
 
 /** The menu's own quick-menu.json. */
@@ -704,7 +695,7 @@ describe('settings', () => {
     ...extra,
   })
 
-  test('boolean, choice, text and number rows write via `/config key=value`', async ($, on) => {
+  test('boolean, choice, text and number rows write via `$.config.set`, each in its kind', async ($, on) => {
     const { sets, set } = recordSets()
     stub(
       on,
@@ -728,10 +719,10 @@ describe('settings', () => {
     await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '42' })
     expect(sets).toMatchObject([
-      { key: 'alpha.flag', value: 'true' },
+      { key: 'alpha.flag', value: true },
       { key: 'alpha.mode', value: 'b' },
       { key: 'alpha.name', value: 'hello' },
-      { key: 'alpha.count', value: '42' },
+      { key: 'alpha.count', value: 42 },
     ])
   })
 
@@ -822,7 +813,7 @@ describe('settings', () => {
     expect(await ui.find({ text: /policy says no/ })).toBeDefined()
   })
 
-  test('a choice option /config refuses shows the reason and keeps the value', async ($, on) => {
+  test('a choice option a config.set hook refuses shows the reason and keeps the value', async ($, on) => {
     stub(on, setup([row('alpha.mode', { kind: 'choice', value: 'a', options: ['a', 'b'] })], { set: () => ({ deny: 'policy says no' }) }))
     await start($)
     const ui = await mountPane($)
@@ -841,8 +832,7 @@ describe('settings', () => {
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
   })
 
-  // An interactive session's `$.command.run` resolves `{}` for `/config`: the row read back decides.
-  test('a write that lands shows no note when /config answers no text (interactive)', async ($, on) => {
+  test('a write that lands shows no note', async ($, on) => {
     stub(
       on,
       setup(
@@ -852,7 +842,6 @@ describe('settings', () => {
           row('alpha.name', { kind: 'text', value: 'x' }),
           row('alpha.count', { kind: 'number', value: 1 }),
         ],
-        { silentConfig: true },
       ),
     )
     await start($)
@@ -871,8 +860,8 @@ describe('settings', () => {
     expect((await ui.findAll({ type: 'Text' })).filter((t: any) => t.props.color === 'red')).toHaveLength(0)
   })
 
-  test('a write the row does not take shows "not changed" when /config answers no text', async ($, on) => {
-    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { silentConfig: true, set: () => ({ deny: 'no' }) }))
+  test('a refusal with no reason shows "not changed"', async ($, on) => {
+    stub(on, setup([row('alpha.flag', { kind: 'boolean', value: false })], { set: () => ({ deny: '' }) }))
     await start($)
     const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.flag' })
@@ -880,12 +869,44 @@ describe('settings', () => {
   })
 
   test('a value a config.set hook clamped is a write, not a refusal', async ($, on) => {
-    stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { silentConfig: true, set: () => ({ value: '10' }) }))
+    stub(on, setup([row('alpha.count', { kind: 'number', value: 1 })], { set: () => ({ value: 10 }) }))
     await start($)
     const ui = await mountPane($)
     await ui.press({ key: 'set:alpha.count' })
     await ui.input({ key: 'set:alpha.count', text: '99' })
     expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
+    expect((await ui.find({ key: 'set:alpha.count' })).props.label).toBe('10 ✎')
+  })
+
+  test('a written value shows at once while $.config.list() still reads the old one', async ($, on) => {
+    stub(on, setup([row('editorMode', { kind: 'choice', value: 'normal', options: ['normal', 'vim'] })], { lagging: true }))
+    await start($)
+    const ui = await mountPane($)
+    await ui.press({ key: 'set:editorMode' })
+    await ui.press({ key: 'set:editorMode:vim' })
+    expect((await ui.find({ key: 'set:editorMode' })).props.label).toBe('vim ▾')
+    expect(await ui.findAll({ text: /not changed/ })).toHaveLength(0)
+  })
+
+  test('options too wide for one line wrap onto lines under the value, none squeezed', async ($, on) => {
+    const options = ['default', 'Proactive', 'Concise', 'Explanatory', 'Learning']
+    stub(on, setup([row('outputStyle', { kind: 'choice', value: 'default', options })]))
+    await start($)
+    const ui = await mountPane($, { columns: 40 })
+    await ui.press({ key: 'set:outputStyle' })
+    const lines = (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('opts:set:outputStyle:'))
+    expect(lines.length).toBeGreaterThan(1)
+    for (const value of options) expect(await ui.find({ key: `set:outputStyle:${value}` })).toBeDefined()
+    const cells = (node: any): number =>
+      typeof node === 'string'
+        ? [...node].length
+        : node.type === 'Button'
+          ? [...String(node.props.label)].length
+          : (node.children ?? []).reduce((n: number, c: unknown) => n + cells(c), 0)
+    // The star and its space come before the line.
+    for (const line of lines) expect(2 + cells(line)).toBeLessThanOrEqual(40)
+    const opts = (await ui.findAll({ type: 'Box' })).filter((b: any) => String(b.key).startsWith('opt:set:outputStyle:'))
+    expect(opts.every((b: any) => b.props.flexShrink === 0)).toBe(true)
   })
 
   test('a row\'s note clears on its next successful write', async ($, on) => {
@@ -924,7 +945,7 @@ describe('settings', () => {
     expect(await ui.findAll({ text: /policy says no/ })).toHaveLength(0)
   })
 
-  test('a text value with spaces is written bare, after the first `=`', async ($, on) => {
+  test('a text value with spaces and `=` is written as typed', async ($, on) => {
     const { sets, set } = recordSets()
     stub(on, setup([row('alpha.name', { kind: 'text', value: 'x' })], { set }))
     await start($)
@@ -994,7 +1015,7 @@ describe('settings', () => {
       expect((await ui.find({ key: 'set:alpha.name' })).props.label).toBe('typed ✎')
     })
 
-    test('saving the unchanged value closes without a /config call', async ($, on) => {
+    test('saving the unchanged value closes without a write', async ($, on) => {
       const { sets, world } = edited()
       stub(on, world)
       await start($)
@@ -1335,7 +1356,7 @@ describe('band', () => {
     expect(calls).toMatchObject([{ command: 'go', args: '--all' }])
   })
 
-  test('a boolean favourite toggles via `/config key=value`', async ($, on) => {
+  test('a boolean favourite toggles via `$.config.set`', async ($, on) => {
     const { sets, set } = recordSets()
     const store = new Map<string, unknown>([['favourites', pin()]])
     stub(on, FAV_WORLD({ store, set }))
@@ -1343,7 +1364,7 @@ describe('band', () => {
     await start($)
     const ui = await mountBand($)
     await ui.press({ key: 'band:2' })
-    expect(sets).toMatchObject([{ key: 'alpha.flag', value: 'true' }])
+    expect(sets).toMatchObject([{ key: 'alpha.flag', value: true }])
   })
 
   test('band width counts code points and keeps room for [-]', async ($, on) => {
