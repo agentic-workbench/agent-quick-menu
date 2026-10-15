@@ -86,7 +86,7 @@ Then run `/reload-plugins` in a running session.
 
 ## What this plugin does on your machine
 
-**Slash commands it runs, and when.** Only when you press a button or a band favourite, and only the command that row shows: `/<command> <args>` from a plugin's `quick-menu.json`. Built-in commands and other plugins' commands need a second press within 5 seconds. When you change a setting row it runs `/config <key>=<value>`, then reads the row back through `$.config.list()` to judge whether the write took. It runs nothing on its own.
+**Slash commands it runs, and when.** Only when you press a button or a band favourite, and only the command that row shows: `/<command> <args>` from a plugin's `quick-menu.json`. Built-in commands and other plugins' commands need a second press within 5 seconds. When you change a setting row it writes it through `$.config.set`, as if you changed it in `/config`; no slash command runs for that. It runs nothing on its own.
 
 **What it sets.** Only the `/config` rows you change in the pane. It sets no environment variables. It keeps favourites and folded sections in Claude Code's plugin store.
 

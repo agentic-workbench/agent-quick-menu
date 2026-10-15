@@ -26,6 +26,7 @@ const rowState = atom({ plugin: 'agent-quick-menu', key: 'rowState' } as const, 
   queued: {},
   notes: {},
   armed: DISARMED,
+  written: {},
 } as RowState)
 const inlineRootState = atom({ plugin: 'agent-quick-menu', key: 'inlineRoots' } as const, {} as Record<string, string>)
 
@@ -658,43 +659,36 @@ async function runCommand($: EngineInterface, plugin: string, c: SectionCommand,
   }
 }
 
-/** A value as `/config key=value` takes it: bare text (quotes would become part of the value), a list comma-joined. */
+/** A value as the row shows it and as two values compare: bare text, a list comma-joined. */
 const configArg = (value: ConfigValue): string => (typeof value === 'object' ? value.join(',') : String(value))
 
-/** The row as `$.config.list()` has it now; undefined when it is gone or the list cannot be read. */
-async function currentRow($: EngineInterface, key: string): Promise<ConfigRow | undefined> {
-  try {
-    return (await $.config.list()).find(r => r.key === key)
-  } catch {
-    return undefined
-  }
-}
-
 /**
- * Writes one row through `/config <key>=<value>`, then reads the row back: the value it holds decides, not the reply.
- * In an interactive session `$.command.run` resolves `{}` for `/config` (its "Set <label> to <value>" goes to the
- * transcript only), so the reply text cannot tell a write from a refusal; a headless one answers with text.
+ * Writes one row through `$.config.set`, as the person would in `/config`: `{ deny }` is a refusal (a hook, a lock, a value
+ * that does not fit), shown beside the row; `{ value }` is a write, as asked or as a `config.set` hook clamped it, remembered
+ * so the next draw shows it even when the engine's own row (the editor mode, the output style) still reads the old value.
  */
 async function writeSetting($: EngineInterface, row: ConfigRow, value: ConfigValue): Promise<void> {
   const id = settingKey(row.key)
   const before = configArg(row.value)
   await setNote($, id, null)
   try {
-    const result = await $.command.run({ command: 'config', args: `${row.key}=${configArg(value)}` })
-    const text = (result.text ?? '').trim()
-    const now = await currentRow($, row.key)
-    if (now) {
-      const after = configArg(now.value)
-      // Written (as asked, or as a config.set hook clamped it), or asked for the value it already held: no refusal.
-      if (after !== configArg(value) && after === before) await setNote($, id, { kind: 'deny', text: text || 'not changed', shown: after })
-    } else if (text !== '' && !text.startsWith('Set ') && !/not changed|already/i.test(text)) {
-      // The row cannot be read back: only a reply that is no write and no "unchanged" is a refusal.
-      await setNote($, id, { kind: 'deny', text, shown: before })
-    }
+    const result = await $.config.set({ key: row.key, value })
+    if (result.deny !== undefined) await setNote($, id, { kind: 'deny', text: result.deny || 'not changed', shown: before })
+    else await remember($, id, { value: result.value, was: before })
   } catch (err) {
     await setNote($, id, { kind: 'error', text: message(err), shown: before })
   }
   $.ui.invalidate('ui.render')
+}
+
+async function remember($: EngineInterface, id: string, write: RowState['written'][string]): Promise<void> {
+  await update($, rowState, s => ({ ...s, written: { ...s.written, [id]: write } }))
+}
+
+/** `row` with the value it was just written to while `$.config.list()` still reads the one before. */
+function withWrite(row: ConfigRow, state: RowState): ConfigRow {
+  const w = state.written[settingKey(row.key)]
+  return w && configArg(row.value) === w.was ? { ...row, value: w.value } : row
 }
 
 /** Sets the open editor and its draft without drawing: the caller draws once, after what it does next. */
@@ -910,7 +904,24 @@ const WHOLE_LINE = Number.POSITIVE_INFINITY
 /** What one setting row shows: its key in the tree, the padded label and the value as text. */
 type SettingView = { row: ConfigRow; id: string; label: string; shown: string }
 
-/** Folded to `value ▾`; pressed, `value ▴` and a row of option Buttons (`● current`, `○ other`), or under the value when the line is too short. */
+/** The options cut into lines of at most `room` cells, as `[from, to)` index ranges; an option wider than that gets a line of its own. */
+function optionLines(cells: readonly number[], room: number): [number, number][] {
+  const lines: [number, number][] = []
+  let from = 0
+  let used = 0
+  cells.forEach((n, i) => {
+    if (i > from && used + n > room) {
+      lines.push([from, i])
+      from = i
+      used = 0
+    }
+    used += n
+  })
+  if (cells.length > from) lines.push([from, cells.length])
+  return lines
+}
+
+/** Folded to `value ▾`; pressed, `value ▴` and a row of option Buttons (`● current`, `○ other`), or lines of them under the value when the line is too short. */
 function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: readonly string[], ctx: RowCtx): Drawn {
   const { Box, Text, Button } = ui
   const { row, id, label, shown } = v
@@ -926,7 +937,7 @@ function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: reado
   )
   if (!open) return { control: head, cells: width(label) + 2 + width(shown) + 2 }
   const buttons = options.map(value => (
-    <Box key={`opt:${id}:${value}`} flexDirection="row">
+    <Box key={`opt:${id}:${value}`} flexDirection="row" flexShrink={0}>
       <Text> </Text>
       <Button
         key={`${id}:${value}`}
@@ -937,7 +948,9 @@ function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: reado
       />
     </Box>
   ))
-  const optionsWidth = options.reduce((sum, value) => sum + 1 + 2 + width(value), 0)
+  // A space, the glyph, a space and the value.
+  const cells = options.map(value => 1 + 2 + width(value))
+  const optionsWidth = cells.reduce((sum, n) => sum + n, 0)
   const indent = STAR_CELLS + width(label) + 2
   const fits = indent + width(shown) + 2 + optionsWidth <= ctx.columns
   const control = fits ? (
@@ -949,10 +962,12 @@ function renderChoice($: EngineInterface, ui: Ui, v: SettingView, options: reado
   ) : (
     <Box key={`choice:${id}`} flexDirection="column">
       {head}
-      <Box flexDirection="row">
-        <Text>{' '.repeat(indent - STAR_CELLS)}</Text>
-        {buttons}
-      </Box>
+      {optionLines(cells, ctx.columns - indent).map(([from, to]) => (
+        <Box key={`opts:${id}:${from}`} flexDirection="row">
+          <Text>{' '.repeat(indent - STAR_CELLS)}</Text>
+          {buttons.slice(from, to)}
+        </Box>
+      ))}
     </Box>
   )
   return { control, cells: WHOLE_LINE }
@@ -1226,7 +1241,7 @@ const foldAll = async ($: EngineInterface, ids: readonly string[], isFold: boole
 }
 
 async function loadMenu($: EngineInterface): Promise<MenuData> {
-  const [s, state, favs, folds, filterText, open, draft, rows] = await Promise.all([
+  const [s, state, favs, folds, filterText, open, draft, listed] = await Promise.all([
     read($, sections),
     read($, rowState),
     read($, favourites),
@@ -1236,6 +1251,7 @@ async function loadMenu($: EngineInterface): Promise<MenuData> {
     read($, editDraft),
     $.config.list().catch((): ConfigRow[] => []),
   ])
+  const rows = listed.map(r => withWrite(r, state))
   const needle = filterText.trim().toLowerCase()
   const all = [...s, ...configSections(rows, s)]
   const blocks: Block[] = []
@@ -1464,8 +1480,8 @@ function bandItem(
 
 /** Opens the pane; when the terminal is too narrow to place it, says why and lets the band carry the menu. */
 async function openPane($: EngineInterface): Promise<void> {
-  // A reopened pane starts without the notes of earlier writes.
-  await update($, rowState, s => ({ ...s, notes: {} }))
+  // A reopened pane starts without the notes and the remembered values of earlier writes.
+  await update($, rowState, s => ({ ...s, notes: {}, written: {} }))
   // Not awaited: the pane opens at once and redraws when the fresh listing lands.
   void refreshListing($).then(listed => listed && $.ui.invalidate('ui.render'))
   const opened = await $.ui.open({ id: PANE_ID, title: 'Quick menu', focus: true, columns: PANE_COLUMNS, closeOnEscape: true })
@@ -1596,7 +1612,7 @@ export const register: Register = on => {
       await update($, inlineRootState, () => ({}))
     }
     sessionStarted = true
-    await update($, rowState, () => ({ queued: {}, notes: {}, armed: DISARMED }))
+    await update($, rowState, () => ({ queued: {}, notes: {}, armed: DISARMED, written: {} }))
     await update($, unplaced, () => false)
     await update($, filter, () => '')
     await putEditor($, '')
