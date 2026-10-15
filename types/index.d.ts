@@ -53,12 +53,17 @@ export type MenuProblem = { plugin: string; message: string }
 /** A row's note. `shown`: the row's value (as `/config key=value` spells it) when the note was made; the note is drawn only while the row still shows it. */
 export type Note = { kind: 'deny' | 'error'; text: string; shown: string }
 
-/** Transient per-row pane state: commands waiting on `$.command.run`, and the deny or error beside a row. */
+/** Transient per-row pane state: commands waiting on `$.command.run`, the deny or error beside a row, and fresh writes. */
 export type RowState = {
   queued: Record<string, true>
   notes: Record<string, Note>
   /** The command whose button was pressed once and waits for the confirming press until `until` (`$.clock.now()` ms). */
   armed: { id: string; until: number }
+  /**
+   * The value each setting row was last written to, shown while `$.config.list()` still reports `was` (an engine row can lag
+   * its write by a draw); dropped when the pane opens again. `value` is a `ConfigValue`, spelled out: the contract imports nothing.
+   */
+  written: Record<string, { value: boolean | string | number | readonly string[]; was: string }>
 }
 
 /** A pinned command (key: command plus args) or setting (key: config key) of the plugin. */
